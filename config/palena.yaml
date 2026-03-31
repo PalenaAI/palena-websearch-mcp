@@ -1,0 +1,106 @@
+# Palena MCP Server — Default Configuration
+# See docs/CONFIG.md for full reference.
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+  readTimeout: 30s
+  writeTimeout: 60s
+
+search:
+  searxngURL: "http://searxng:8080"
+  defaultEngines:
+    - google
+    - duckduckgo
+    - brave
+  engineRoutes:
+    general: ["google", "duckduckgo", "brave"]
+    news: ["google news", "duckduckgo", "bing news"]
+    code: ["github", "stackoverflow", "duckduckgo"]
+    science: ["google scholar", "duckduckgo", "wikipedia"]
+  defaultLanguage: "en"
+  safeSearch: 1
+  maxResults: 10
+  timeout: 10s
+  queryExpansion:
+    enabled: false
+    maxVariants: 2
+
+scraper:
+  maxConcurrency: 5
+  timeouts:
+    httpGet: 10s
+    browserPage: 15s
+    browserNav: 30s
+  chromiumCDP:
+    endpoint: "ws://chromium:9222"
+    maxTabs: 3
+  stealth:
+    enabled: true
+    randomizeViewport: true
+    randomizeUserAgent: true
+  proxy:
+    enabled: false
+    pool: []
+    cooldownSeconds: 300
+  contentDetection:
+    minTextLength: 500
+    minTextRatio: 0.05
+    maxScriptTags: 5
+
+pii:
+  enabled: true
+  mode: "audit"
+  analyzerURL: "http://presidio-analyzer:5002"
+  anonymizerURL: "http://presidio-anonymizer:5001"
+  language: "en"
+  scoreThreshold: 0.5
+  blockThreshold: 5.0
+  entities:
+    - PERSON
+    - EMAIL_ADDRESS
+    - PHONE_NUMBER
+    - CREDIT_CARD
+    - IBAN_CODE
+    - IP_ADDRESS
+    - LOCATION
+    - US_SSN
+    - MEDICAL_LICENSE
+  timeout: 5s
+
+reranker:
+  provider: "none"
+  endpoint: "http://reranker:8080"
+  model: ""
+  topK: 5
+  timeout: 10s
+
+policy:
+  robots:
+    enabled: true
+    cacheSeconds: 3600
+  domains:
+    mode: "blocklist"
+    allowlist: []
+    blocklist:
+      - "example-blocked.com"
+  rateLimit:
+    enabled: true
+    requestsPerDomainPerMinute: 10
+
+output:
+  format: "markdown"
+  includeProvenance: true
+  maxContentLength: 5000
+  chunkTokenTarget: 0
+
+otel:
+  enabled: true
+  endpoint: "http://otel-collector:4317"
+  serviceName: "palena"
+  insecure: true
+  samplingRate: 1.0
+
+logging:
+  level: "info"
+  format: "json"
