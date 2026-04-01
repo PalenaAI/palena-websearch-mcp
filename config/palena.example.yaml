@@ -83,6 +83,30 @@ scraper:
     maxScriptTags: 5                       # Script tag count — above this, likely SPA.
 
 # =============================================================================
+# Domain Policy — allowlist/blocklist, robots.txt, rate limiting
+# =============================================================================
+policy:
+  robots:
+    enabled: true                          # PALENA_POLICY_ROBOTS_ENABLED
+    # Respect robots.txt before scraping.
+    cacheSeconds: 3600                     # PALENA_POLICY_ROBOTS_CACHE_SECONDS
+    # How long to cache robots.txt per domain (seconds).
+
+  domains:
+    mode: "blocklist"                      # PALENA_POLICY_DOMAINS_MODE
+      # blocklist — drop URLs matching blocklist entries
+    # allowlist — drop URLs NOT matching allowlist entries
+    allowlist: []                          # Domain suffixes to allow (mode=allowlist).
+    # Example: ["example.com", "docs.example.com"]
+    blocklist: []                          # Domain suffixes to block (mode=blocklist).
+    # Example: ["malware-site.com", "ads.example.com"]
+
+  rateLimit:
+    enabled: true                          # PALENA_POLICY_RATELIMIT_ENABLED
+    requestsPerDomainPerMinute: 10         # PALENA_POLICY_RATELIMIT_RPM
+    # Max scrape requests per domain per minute.
+
+# =============================================================================
 # PII — Presidio integration for PII detection and redaction
 # =============================================================================
 pii:

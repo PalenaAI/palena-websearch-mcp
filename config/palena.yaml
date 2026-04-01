@@ -1,63 +1,131 @@
-# Palena MCP Server — Default Configuration
-# See docs/CONFIG.md for full reference.
-# See config/palena.example.yaml for annotated version with all options.
+# =============================================================================
+# Palena MCP Server — Full Annotated Configuration
+# =============================================================================
+#
+# Copy this file to palena.yaml and adjust values for your deployment.
+# Every key can be overridden by an environment variable using the pattern
+# PALENA_SECTION_KEY (uppercase, underscores). See docs/CONFIG.md.
+#
+# Config loading order:
+#   1. Built-in defaults (internal/config/config.go)
+#   2. YAML file at PALENA_CONFIG_PATH (default: ./palena.yaml)
+#   3. Environment variables override YAML values
 
+# =============================================================================
+# Server — HTTP listener settings
+# =============================================================================
 server:
-  host: "0.0.0.0"
-  port: 8080
-  readTimeout: 30s
-  writeTimeout: 60s
+  host: "0.0.0.0"                         # PALENA_SERVER_HOST — bind address
+  port: 8080                               # PALENA_SERVER_PORT — listen port
+  readTimeout: 30s                         # max time to read full request
+  writeTimeout: 60s                        # max time to write full response
 
+# =============================================================================
+# Search — SearXNG metasearch integration
+# =============================================================================
 search:
-  searxngURL: "http://searxng:8080"
-  defaultEngines:
+  searxngURL: "http://searxng:8080"        # PALENA_SEARCH_SEARXNG_URL (required)
+  # Must be reachable from the Palena container.
+  defaultEngines:                          # Engines used when no category-specific route matches.
     - google
     - duckduckgo
     - brave
-  engineRoutes:
+
+  engineRoutes:                            # Per-category engine routing.
     general: ["google", "duckduckgo", "brave"]
     news: ["google news", "duckduckgo", "bing news"]
     code: ["github", "stackoverflow", "duckduckgo"]
     science: ["google scholar", "duckduckgo", "wikipedia"]
-  defaultLanguage: "en"
-  safeSearch: 1
-  maxResults: 10
-  timeout: 10s
+
+  defaultLanguage: "en"                    # PALENA_SEARCH_DEFAULT_LANGUAGE
+  safeSearch: 1                            # 0=off, 1=moderate, 2=strict
+  maxResults: 10                           # Max results to fetch from SearXNG (before reranking).
+  timeout: 10s                             # SearXNG request timeout.
+
   queryExpansion:
-    enabled: false
-    maxVariants: 2
+    enabled: false                         # PALENA_SEARCH_QUERY_EXPANSION_ENABLED
+    maxVariants: 2                         # Max query variants to generate.
 
+# =============================================================================
+# Scraper — tiered content extraction
+# =============================================================================
 scraper:
-  maxConcurrency: 5
-  timeouts:
-    httpGet: 10s
-    browserPage: 15s
-    browserNav: 30s
-  chromiumCDP:
-    endpoint: "ws://chromium:3000"
-    maxTabs: 3
-  stealth:
-    enabled: true
-    randomizeViewport: true
-    randomizeUserAgent: true
-  proxy:
-    enabled: false
-    pool: []
-    cooldownSeconds: 300
-  contentDetection:
-    minTextLength: 500
-    minTextRatio: 0.05
-    maxScriptTags: 5
+  maxConcurrency: 5                        # Max concurrent scrape workers.
 
+  timeouts:
+    httpGet: 10s                           # L0: plain HTTP GET timeout.
+    browserPage: 15s                       # L1/L2: per-page render timeout.
+    browserNav: 30s                        # L1/L2: navigation timeout.
+
+  chromiumCDP:
+    endpoint: "ws://chromium:3000"         # PALENA_SCRAPER_CHROMIUM_ENDPOINT
+      # WebSocket URL to a headless Chromium instance.
+    # Set to "" to disable L1/L2 scraping entirely.
+    maxTabs: 3                             # Max concurrent browser tabs (semaphore).
+
+  stealth:
+    enabled: true                          # Enable L2 stealth anti-detection measures.
+    randomizeViewport: true                # Randomize viewport dimensions per request.
+    randomizeUserAgent: true               # Randomize User-Agent string per request.
+
+  proxy:
+    enabled: false                         # PALENA_SCRAPER_PROXY_ENABLED
+    pool:                                  # List of proxy entries for L2 rotation.
+    # - url: "http://user:pass@proxy1:8080"
+    #   region: "us-east"
+    # - url: "socks5://user:pass@proxy2:1080"
+    #   region: "eu-west"
+    cooldownSeconds: 300                   # Exclude a failed proxy for this many seconds.
+
+  contentDetection:
+    minTextLength: 500                     # Chars threshold — below this, content is "thin".
+    minTextRatio: 0.05                     # Text/markup ratio — below this, likely JS-rendered.
+    maxScriptTags: 5                       # Script tag count — above this, likely SPA.
+
+# =============================================================================
+# Domain Policy — allowlist/blocklist, robots.txt, rate limiting
+# =============================================================================
+policy:
+  robots:
+    enabled: true                          # PALENA_POLICY_ROBOTS_ENABLED
+    # Respect robots.txt before scraping.
+    cacheSeconds: 3600                     # PALENA_POLICY_ROBOTS_CACHE_SECONDS
+    # How long to cache robots.txt per domain (seconds).
+
+  domains:
+    mode: "blocklist"                      # PALENA_POLICY_DOMAINS_MODE
+      # blocklist — drop URLs matching blocklist entries
+    # allowlist — drop URLs NOT matching allowlist entries
+    allowlist: []                          # Domain suffixes to allow (mode=allowlist).
+    # Example: ["example.com", "docs.example.com"]
+    blocklist: []                          # Domain suffixes to block (mode=blocklist).
+    # Example: ["malware-site.com", "ads.example.com"]
+
+  rateLimit:
+    enabled: true                          # PALENA_POLICY_RATELIMIT_ENABLED
+    requestsPerDomainPerMinute: 10         # PALENA_POLICY_RATELIMIT_RPM
+    # Max scrape requests per domain per minute.
+
+# =============================================================================
+# PII — Presidio integration for PII detection and redaction
+# =============================================================================
 pii:
-  enabled: true
-  mode: "audit"
-  analyzerURL: "http://presidio-analyzer:5002"
-  anonymizerURL: "http://presidio-anonymizer:5001"
-  language: "en"
-  scoreThreshold: 0.5
-  blockThreshold: 5.0
-  entities:
+  enabled: true                            # PALENA_PII_ENABLED
+  # Set to false to skip PII processing entirely.
+
+  mode: "audit"                            # PALENA_PII_MODE
+    # audit  — detect PII, log findings, pass content through
+    # redact — detect PII, anonymize, log, return redacted
+  # block  — detect PII, if density > threshold reject document
+
+  analyzerURL: "http://presidio-analyzer:5002"    # PALENA_PII_ANALYZER_URL
+  anonymizerURL: "http://presidio-anonymizer:5001" # PALENA_PII_ANONYMIZER_URL
+
+  language: "en"                           # Language for PII detection.
+  scoreThreshold: 0.5                      # Min confidence to count a detection.
+  blockThreshold: 5.0                      # Entities per 1000 chars to trigger block (mode=block).
+
+  entities:                                # Entity types to detect.
     - PERSON
     - EMAIL_ADDRESS
     - PHONE_NUMBER
@@ -67,35 +135,90 @@ pii:
     - LOCATION
     - US_SSN
     - MEDICAL_LICENSE
-  timeout: 5s
 
+  anonymizers:                             # Per-entity-type anonymization strategy.
+    DEFAULT:
+      type: "replace"
+      newValue: "<REDACTED>"
+    PERSON:
+      type: "replace"
+      newValue: "<PERSON>"
+    EMAIL_ADDRESS:
+      type: "mask"
+      maskingChar: "*"
+      charsToMask: 100
+      fromEnd: false
+    PHONE_NUMBER:
+      type: "replace"
+      newValue: "<PHONE>"
+
+  timeout: 5s                              # Presidio request timeout.
+
+# =============================================================================
+# Reranker — pluggable relevance re-scoring
+# =============================================================================
 reranker:
-  provider: "none"
-  endpoint: "http://flashrank:8080"
-  model: ""
-  topK: 5
-  timeout: 10s
+  provider: "none"                         # PALENA_RERANKER_PROVIDER
+    # kserve   — GPU cross-encoder via KServe
+    # flashrank — CPU ONNX model via sidecar
+    # rankllm  — any LLM as reranker
+  # none     — skip reranking, keep search engine order
 
+  endpoint: "http://flashrank:8080"        # PALENA_RERANKER_ENDPOINT
+  # Sidecar endpoint URL.
+
+  model: ""                                # Model identifier (provider-specific).
+    # FlashRank: "ms-marco-MiniLM-L-12-v2" (default in sidecar)
+  # KServe: "mixedbread-ai/mxbai-rerank-large-v2"
+
+  topK: 5                                 # PALENA_RERANKER_TOP_K — return top K after reranking.
+  timeout: 10s                             # Reranker call timeout.
+
+# =============================================================================
+# Provenance — content audit trail and hash chain
+# =============================================================================
 provenance:
-  enabled: true
+  enabled: true                            # PALENA_PROVENANCE_ENABLED
+  # Compute SHA-256 hash chain and emit audit records.
+
   clickhouse:
-    enabled: false
-    endpoint: "http://clickhouse:8123"
+    enabled: false                         # PALENA_PROVENANCE_CLICKHOUSE_ENABLED
+    endpoint: "http://clickhouse:8123"     # PALENA_PROVENANCE_CLICKHOUSE_ENDPOINT
     database: "palena"
     table: "palena_provenance"
-    batchSize: 50
-    flushInterval: 5s
+    batchSize: 50                          # Records to batch before inserting.
+    flushInterval: 5s                      # Max time before flushing a partial batch.
 
+# =============================================================================
+# OpenTelemetry — distributed tracing and metrics
+# =============================================================================
 otel:
-  enabled: false
-  serviceName: "palena"
-  traceExporter: "none"
-  traceEndpoint: "localhost:4317"
-  metricExporter: "none"
-  metricEndpoint: "localhost:4317"
-  sampleRate: 1.0
-  exportTimeout: 10s
+  enabled: false                           # PALENA_OTEL_ENABLED
+  serviceName: "palena"                    # OTel service name.
 
+  traceExporter: "none"                    # PALENA_OTEL_TRACE_EXPORTER
+    # otlp   — export traces via gRPC to an OTLP collector
+    # stdout — print traces to stdout (debug)
+  # none   — disable tracing
+
+  traceEndpoint: "localhost:4317"          # PALENA_OTEL_TRACE_ENDPOINT
+  # OTLP gRPC endpoint for traces.
+
+  metricExporter: "none"                   # PALENA_OTEL_METRIC_EXPORTER
+    # prometheus — expose /metrics endpoint
+    # otlp      — export metrics via gRPC
+    # stdout     — print metrics to stdout (debug)
+  # none       — disable metrics
+
+  metricEndpoint: "localhost:4317"         # PALENA_OTEL_METRIC_ENDPOINT
+  # OTLP gRPC endpoint for metrics.
+
+  sampleRate: 1.0                          # Trace sampling rate (0.0 to 1.0).
+  exportTimeout: 10s                       # Exporter flush timeout.
+
+# =============================================================================
+# Logging — structured logging output
+# =============================================================================
 logging:
-  level: "info"
-  format: "json"
+  level: "info"                            # PALENA_LOGGING_LEVEL: debug | info | warn | error
+  format: "json"                           # json | text

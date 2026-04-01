@@ -19,11 +19,38 @@ type Config struct {
 	Server     ServerConfig     `yaml:"server"`
 	Search     SearchConfig     `yaml:"search"`
 	Scraper    ScraperConfig    `yaml:"scraper"`
+	Policy     PolicyConfig     `yaml:"policy"`
 	PII        PIIConfig        `yaml:"pii"`
 	Reranker   RerankerConfig   `yaml:"reranker"`
 	Provenance ProvenanceConfig `yaml:"provenance"`
 	OTel       OTelConfig       `yaml:"otel"`
 	Logging    LoggingConfig    `yaml:"logging"`
+}
+
+// PolicyConfig holds settings for domain filtering, robots.txt, and rate limiting.
+type PolicyConfig struct {
+	Robots    RobotsConfig    `yaml:"robots"`
+	Domains   DomainConfig    `yaml:"domains"`
+	RateLimit RateLimitConfig `yaml:"rateLimit"`
+}
+
+// RobotsConfig controls robots.txt enforcement.
+type RobotsConfig struct {
+	Enabled      bool `yaml:"enabled"`
+	CacheSeconds int  `yaml:"cacheSeconds"`
+}
+
+// DomainConfig controls domain allowlist/blocklist filtering.
+type DomainConfig struct {
+	Mode      string   `yaml:"mode"` // allowlist | blocklist
+	Allowlist []string `yaml:"allowlist"`
+	Blocklist []string `yaml:"blocklist"`
+}
+
+// RateLimitConfig controls per-domain request rate limiting.
+type RateLimitConfig struct {
+	Enabled                    bool `yaml:"enabled"`
+	RequestsPerDomainPerMinute int  `yaml:"requestsPerDomainPerMinute"`
 }
 
 // PIIConfig holds settings for the PII detection and redaction subsystem.
@@ -222,6 +249,21 @@ func (c *Config) setDefaults() {
 			MaxScriptTags: 5,
 		},
 	}
+	c.Policy = PolicyConfig{
+		Robots: RobotsConfig{
+			Enabled:      true,
+			CacheSeconds: 3600,
+		},
+		Domains: DomainConfig{
+			Mode:      "blocklist",
+			Allowlist: []string{},
+			Blocklist: []string{},
+		},
+		RateLimit: RateLimitConfig{
+			Enabled:                    true,
+			RequestsPerDomainPerMinute: 10,
+		},
+	}
 	c.PII = PIIConfig{
 		Enabled:        true,
 		Mode:           "audit",
@@ -330,6 +372,27 @@ func (c *Config) applyEnvOverrides() {
 	if v := os.Getenv("PALENA_SCRAPER_PROXY_ENABLED"); v != "" {
 		c.Scraper.Proxy.Enabled = strings.EqualFold(v, "true")
 	}
+	// Policy overrides.
+	if v := os.Getenv("PALENA_POLICY_ROBOTS_ENABLED"); v != "" {
+		c.Policy.Robots.Enabled = strings.EqualFold(v, "true")
+	}
+	if v := os.Getenv("PALENA_POLICY_ROBOTS_CACHE_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			c.Policy.Robots.CacheSeconds = n
+		}
+	}
+	if v := os.Getenv("PALENA_POLICY_DOMAINS_MODE"); v != "" {
+		c.Policy.Domains.Mode = v
+	}
+	if v := os.Getenv("PALENA_POLICY_RATELIMIT_ENABLED"); v != "" {
+		c.Policy.RateLimit.Enabled = strings.EqualFold(v, "true")
+	}
+	if v := os.Getenv("PALENA_POLICY_RATELIMIT_RPM"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			c.Policy.RateLimit.RequestsPerDomainPerMinute = n
+		}
+	}
+
 	if v := os.Getenv("PALENA_PII_ENABLED"); v != "" {
 		c.PII.Enabled = strings.EqualFold(v, "true")
 	}
@@ -395,6 +458,18 @@ func (c *Config) validate() error {
 	}
 	if c.Search.Timeout <= 0 {
 		return fmt.Errorf("search.timeout must be positive")
+	}
+
+	// Policy validation.
+	validDomainModes := map[string]bool{"allowlist": true, "blocklist": true}
+	if !validDomainModes[c.Policy.Domains.Mode] {
+		return fmt.Errorf("policy.domains.mode must be one of: allowlist, blocklist; got %q", c.Policy.Domains.Mode)
+	}
+	if c.Policy.Robots.CacheSeconds < 0 {
+		return fmt.Errorf("policy.robots.cacheSeconds must be >= 0, got %d", c.Policy.Robots.CacheSeconds)
+	}
+	if c.Policy.RateLimit.Enabled && c.Policy.RateLimit.RequestsPerDomainPerMinute < 1 {
+		return fmt.Errorf("policy.rateLimit.requestsPerDomainPerMinute must be >= 1, got %d", c.Policy.RateLimit.RequestsPerDomainPerMinute)
 	}
 
 	// PII validation.

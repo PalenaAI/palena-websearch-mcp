@@ -26,7 +26,7 @@ palena:
 
   # Environment variable overrides (applied on top of the ConfigMap).
   env: {}
-    # PALENA_LOGGING_LEVEL: "debug"
+  # PALENA_LOGGING_LEVEL: "debug"
 
 # =============================================================================
 # SearXNG (hard dependency — always deployed)
@@ -159,6 +159,18 @@ config:
   scraper:
     maxConcurrency: 5
     maxTabs: 3
+
+  policy:
+    robots:
+      enabled: true
+      cacheSeconds: 3600
+    domains:
+      mode: "blocklist"
+      allowlist: []
+      blocklist: []
+    rateLimit:
+      enabled: true
+      requestsPerDomainPerMinute: 10
 
   pii:
     enabled: true

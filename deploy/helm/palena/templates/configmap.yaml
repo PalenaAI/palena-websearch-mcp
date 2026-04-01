@@ -60,6 +60,18 @@ data:
         minTextRatio: 0.05
         maxScriptTags: 5
 
+    policy:
+      robots:
+        enabled: {{ .Values.config.policy.robots.enabled }}
+        cacheSeconds: {{ .Values.config.policy.robots.cacheSeconds }}
+      domains:
+        mode: {{ .Values.config.policy.domains.mode | quote }}
+        allowlist: {{ .Values.config.policy.domains.allowlist | toJson }}
+        blocklist: {{ .Values.config.policy.domains.blocklist | toJson }}
+      rateLimit:
+        enabled: {{ .Values.config.policy.rateLimit.enabled }}
+        requestsPerDomainPerMinute: {{ .Values.config.policy.rateLimit.requestsPerDomainPerMinute }}
+
     pii:
       enabled: {{ .Values.presidio.enabled }}
       mode: {{ .Values.config.pii.mode | quote }}

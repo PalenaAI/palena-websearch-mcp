@@ -16,6 +16,7 @@ import (
 	palenaOTel "github.com/bitkaio/palena-websearch-mcp/internal/otel"
 	"github.com/bitkaio/palena-websearch-mcp/internal/output"
 	"github.com/bitkaio/palena-websearch-mcp/internal/pii"
+	"github.com/bitkaio/palena-websearch-mcp/internal/policy"
 	"github.com/bitkaio/palena-websearch-mcp/internal/reranker"
 	"github.com/bitkaio/palena-websearch-mcp/internal/scraper"
 	"github.com/bitkaio/palena-websearch-mcp/internal/search"
@@ -86,6 +87,11 @@ func main() {
 		logger.Info("pii processing disabled")
 	}
 
+	// Create policy components (nil when disabled / not needed).
+	domainFilter := policy.NewDomainFilter(cfg.Policy, logger)
+	robotsChecker := policy.NewRobotsChecker(cfg.Policy, logger)
+	rateLimiter := policy.NewRateLimiter(cfg.Policy, logger)
+
 	// Create provenance ClickHouse exporter (nil if disabled).
 	provExporter := output.NewClickHouseExporter(cfg.Provenance.ClickHouse, logger)
 	if cfg.Provenance.Enabled {
@@ -95,7 +101,7 @@ func main() {
 	}
 
 	// Create and start MCP server.
-	srv := transport.NewServer(cfg, searchClient, sc, piiProc, rr, meters, provExporter, promHandler, logger)
+	srv := transport.NewServer(cfg, searchClient, sc, domainFilter, robotsChecker, rateLimiter, piiProc, rr, meters, provExporter, promHandler, logger)
 
 	// Graceful shutdown on SIGINT/SIGTERM.
 	done := make(chan os.Signal, 1)

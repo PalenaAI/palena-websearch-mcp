@@ -20,6 +20,7 @@ import (
 	palenaOTel "github.com/bitkaio/palena-websearch-mcp/internal/otel"
 	"github.com/bitkaio/palena-websearch-mcp/internal/output"
 	"github.com/bitkaio/palena-websearch-mcp/internal/pii"
+	"github.com/bitkaio/palena-websearch-mcp/internal/policy"
 	"github.com/bitkaio/palena-websearch-mcp/internal/reranker"
 	"github.com/bitkaio/palena-websearch-mcp/internal/scraper"
 	"github.com/bitkaio/palena-websearch-mcp/internal/search"
@@ -57,20 +58,26 @@ type ResultMeta struct {
 
 // ToolHandler holds the dependencies needed to execute the web_search tool.
 type ToolHandler struct {
-	searchClient *search.SearXNGClient
-	scraper      *scraper.Scraper
-	pii          *pii.Processor
-	reranker     reranker.Reranker
-	cfg          *config.Config
-	logger       *slog.Logger
-	meters       *palenaOTel.Meters
-	provExporter *output.ClickHouseExporter
+	searchClient  *search.SearXNGClient
+	scraper       *scraper.Scraper
+	domainFilter  *policy.DomainFilter
+	robotsChecker *policy.RobotsChecker
+	rateLimiter   *policy.RateLimiter
+	pii           *pii.Processor
+	reranker      reranker.Reranker
+	cfg           *config.Config
+	logger        *slog.Logger
+	meters        *palenaOTel.Meters
+	provExporter  *output.ClickHouseExporter
 }
 
 // NewToolHandler creates a handler with the given pipeline components.
 func NewToolHandler(
 	searchClient *search.SearXNGClient,
 	sc *scraper.Scraper,
+	domainFilter *policy.DomainFilter,
+	robotsChecker *policy.RobotsChecker,
+	rateLimiter *policy.RateLimiter,
 	piiProc *pii.Processor,
 	rr reranker.Reranker,
 	cfg *config.Config,
@@ -79,14 +86,17 @@ func NewToolHandler(
 	logger *slog.Logger,
 ) *ToolHandler {
 	return &ToolHandler{
-		searchClient: searchClient,
-		scraper:      sc,
-		pii:          piiProc,
-		reranker:     rr,
-		cfg:          cfg,
-		logger:       logger,
-		meters:       meters,
-		provExporter: provExporter,
+		searchClient:  searchClient,
+		scraper:       sc,
+		domainFilter:  domainFilter,
+		robotsChecker: robotsChecker,
+		rateLimiter:   rateLimiter,
+		pii:           piiProc,
+		reranker:      rr,
+		cfg:           cfg,
+		logger:        logger,
+		meters:        meters,
+		provExporter:  provExporter,
 	}
 }
 
@@ -212,10 +222,46 @@ func (h *ToolHandler) HandleWebSearch(
 	if len(deduped) < scrapeLimit {
 		scrapeLimit = len(deduped)
 	}
+	policyResults := deduped[:scrapeLimit]
 
-	urls := make([]string, scrapeLimit)
-	for i := 0; i < scrapeLimit; i++ {
-		urls[i] = deduped[i].URL
+	// --- Stage 2.5: Domain Policy ---
+	policyCtx, policySpan := palenaOTel.StartSpan(ctx, "palena.policy")
+	policySpan.SetAttributes(attribute.Int("policy.input_count", len(policyResults)))
+
+	// 1. Domain filter.
+	if h.domainFilter != nil {
+		allowed, dropped := h.domainFilter.Filter(policyResults)
+		policySpan.SetAttributes(attribute.Int("policy.domain_dropped", len(dropped)))
+		policyResults = allowed
+	}
+
+	// 2. Robots.txt check.
+	if h.robotsChecker != nil {
+		allowed, blocked := h.robotsChecker.CheckAll(policyCtx, policyResults)
+		policySpan.SetAttributes(attribute.Int("policy.robots_blocked", len(blocked)))
+		policyResults = allowed
+	}
+
+	// 3. Rate limit.
+	if h.rateLimiter != nil {
+		allowed, limited := h.rateLimiter.FilterAll(policyResults)
+		policySpan.SetAttributes(attribute.Int("policy.rate_limited", len(limited)))
+		policyResults = allowed
+	}
+
+	policySpan.SetAttributes(attribute.Int("policy.results_after", len(policyResults)))
+	palenaOTel.SetSpanOK(policySpan)
+	policySpan.End()
+
+	if len(policyResults) == 0 {
+		err := fmt.Errorf("all results filtered by policy for query %q", input.Query)
+		palenaOTel.SetSpanError(pipelineSpan, err)
+		return nil, WebSearchOutput{}, err
+	}
+
+	urls := make([]string, len(policyResults))
+	for i, r := range policyResults {
+		urls[i] = r.URL
 	}
 
 	// --- Stage 3: Scrape ---

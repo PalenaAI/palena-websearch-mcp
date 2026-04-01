@@ -18,6 +18,7 @@ import (
 	palenaOTel "github.com/bitkaio/palena-websearch-mcp/internal/otel"
 	"github.com/bitkaio/palena-websearch-mcp/internal/output"
 	"github.com/bitkaio/palena-websearch-mcp/internal/pii"
+	"github.com/bitkaio/palena-websearch-mcp/internal/policy"
 	"github.com/bitkaio/palena-websearch-mcp/internal/reranker"
 	"github.com/bitkaio/palena-websearch-mcp/internal/scraper"
 	"github.com/bitkaio/palena-websearch-mcp/internal/search"
@@ -39,6 +40,9 @@ func NewServer(
 	cfg *config.Config,
 	searchClient *search.SearXNGClient,
 	sc *scraper.Scraper,
+	domainFilter *policy.DomainFilter,
+	robotsChecker *policy.RobotsChecker,
+	rateLimiter *policy.RateLimiter,
 	piiProc *pii.Processor,
 	rr reranker.Reranker,
 	meters *palenaOTel.Meters,
@@ -55,7 +59,7 @@ func NewServer(
 	)
 
 	// Register the web_search tool.
-	toolHandler := NewToolHandler(searchClient, sc, piiProc, rr, cfg, meters, provExporter, logger)
+	toolHandler := NewToolHandler(searchClient, sc, domainFilter, robotsChecker, rateLimiter, piiProc, rr, cfg, meters, provExporter, logger)
 	mcp.AddTool(mcpServer, WebSearchTool(), toolHandler.HandleWebSearch)
 
 	s := &Server{
