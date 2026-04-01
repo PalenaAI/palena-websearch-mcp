@@ -11,10 +11,13 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/bitkaio/palena-websearch-mcp/internal/config"
 	"github.com/bitkaio/palena-websearch-mcp/internal/output"
+	"github.com/bitkaio/palena-websearch-mcp/internal/pii"
 	"github.com/bitkaio/palena-websearch-mcp/internal/reranker"
 	"github.com/bitkaio/palena-websearch-mcp/internal/scraper"
 	"github.com/bitkaio/palena-websearch-mcp/internal/search"
@@ -54,6 +57,7 @@ type ResultMeta struct {
 type ToolHandler struct {
 	searchClient *search.SearXNGClient
 	scraper      *scraper.Scraper
+	pii          *pii.Processor
 	reranker     reranker.Reranker
 	cfg          *config.Config
 	logger       *slog.Logger
@@ -63,6 +67,7 @@ type ToolHandler struct {
 func NewToolHandler(
 	searchClient *search.SearXNGClient,
 	sc *scraper.Scraper,
+	piiProc *pii.Processor,
 	rr reranker.Reranker,
 	cfg *config.Config,
 	logger *slog.Logger,
@@ -70,6 +75,7 @@ func NewToolHandler(
 	return &ToolHandler{
 		searchClient: searchClient,
 		scraper:      sc,
+		pii:          piiProc,
 		reranker:     rr,
 		cfg:          cfg,
 		logger:       logger,
@@ -199,6 +205,43 @@ func (h *ToolHandler) HandleWebSearch(
 		)
 	}
 
+	// Stage 3.5: PII detection/redaction.
+	requestID := trace.SpanFromContext(ctx).SpanContext().TraceID().String()
+	piiMode := h.cfg.PII.Mode
+	piiChecked := false
+	var blockedURLs []string
+
+	if h.pii != nil {
+		var filtered []scrapedDoc
+		for _, s := range scraped {
+			result := h.pii.Process(ctx, &pii.Document{
+				URL:      s.URL,
+				Content:  s.Markdown,
+				Language: language,
+			}, requestID)
+
+			piiChecked = piiChecked || result.PIIChecked
+
+			if result.Blocked {
+				blockedURLs = append(blockedURLs, s.URL)
+				h.logger.InfoContext(ctx, "document blocked by PII policy",
+					"url", s.URL,
+				)
+				continue
+			}
+
+			s.Markdown = result.Content
+			filtered = append(filtered, s)
+		}
+		scraped = filtered
+	}
+
+	if len(scraped) == 0 {
+		return nil, WebSearchOutput{}, fmt.Errorf(
+			"all documents were blocked by PII policy for query %q", input.Query,
+		)
+	}
+
 	// Stage 4: Rerank.
 	rerankerName := h.reranker.Name()
 	docs := make([]reranker.Document, len(scraped))
@@ -256,15 +299,21 @@ func (h *ToolHandler) HandleWebSearch(
 		})
 	}
 
+	// Append blocked documents note if any.
+	if len(blockedURLs) > 0 {
+		fmt.Fprintf(&contentBuilder, "**Note:** %d document(s) were blocked by PII policy and excluded from results.\n\n", len(blockedURLs))
+	}
+
 	// Append sources footer.
 	fmt.Fprintf(&contentBuilder, "**Sources:**\n")
 	for i, rm := range resultMetas {
 		fmt.Fprintf(&contentBuilder, "[%d] %s\n", i+1, rm.URL)
 	}
 
+	piiStatus := fmt.Sprintf("%s (checked=%t)", piiMode, piiChecked)
 	fmt.Fprintf(&contentBuilder, "\n**Metadata:**\n")
 	fmt.Fprintf(&contentBuilder, "- Results returned: %d\n", len(resultMetas))
-	fmt.Fprintf(&contentBuilder, "- PII mode: none (not yet enabled)\n")
+	fmt.Fprintf(&contentBuilder, "- PII: %s\n", piiStatus)
 	fmt.Fprintf(&contentBuilder, "- Reranker: %s\n", rerankerName)
 	fmt.Fprintf(&contentBuilder, "- Search engines: %s\n", strings.Join(engines, ", "))
 
@@ -274,8 +323,8 @@ func (h *ToolHandler) HandleWebSearch(
 		Query:         input.Query,
 		ResultCount:   len(resultMetas),
 		SearchEngines: engines,
-		PIIMode:       "none",
-		PIIChecked:    false,
+		PIIMode:       piiMode,
+		PIIChecked:    piiChecked,
 		RerankerUsed:  rerankerName,
 		TotalDuration: elapsed.Milliseconds(),
 		Results:       resultMetas,

@@ -15,6 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/bitkaio/palena-websearch-mcp/internal/config"
+	"github.com/bitkaio/palena-websearch-mcp/internal/pii"
 	"github.com/bitkaio/palena-websearch-mcp/internal/reranker"
 	"github.com/bitkaio/palena-websearch-mcp/internal/scraper"
 	"github.com/bitkaio/palena-websearch-mcp/internal/search"
@@ -36,6 +37,7 @@ func NewServer(
 	cfg *config.Config,
 	searchClient *search.SearXNGClient,
 	sc *scraper.Scraper,
+	piiProc *pii.Processor,
 	rr reranker.Reranker,
 	logger *slog.Logger,
 ) *Server {
@@ -48,7 +50,7 @@ func NewServer(
 	)
 
 	// Register the web_search tool.
-	toolHandler := NewToolHandler(searchClient, sc, rr, cfg, logger)
+	toolHandler := NewToolHandler(searchClient, sc, piiProc, rr, cfg, logger)
 	mcp.AddTool(mcpServer, WebSearchTool(), toolHandler.HandleWebSearch)
 
 	s := &Server{
@@ -136,6 +138,12 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	// If SearXNG (hard dependency) is down, report degraded.
 	if resp.Sidecars["searxng"] != "ok" {
 		resp.Status = "degraded"
+	}
+
+	// PII sidecars are soft dependencies — report status but don't degrade.
+	if s.cfg.PII.Enabled {
+		resp.Sidecars["presidio-analyzer"] = s.pingSidecar(r.Context(), s.cfg.PII.AnalyzerURL+"/health")
+		resp.Sidecars["presidio-anonymizer"] = s.pingSidecar(r.Context(), s.cfg.PII.AnonymizerURL+"/health")
 	}
 
 	w.Header().Set("Content-Type", "application/json")

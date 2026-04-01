@@ -19,9 +19,33 @@ type Config struct {
 	Server   ServerConfig   `yaml:"server"`
 	Search   SearchConfig   `yaml:"search"`
 	Scraper  ScraperConfig  `yaml:"scraper"`
+	PII      PIIConfig      `yaml:"pii"`
 	Reranker RerankerConfig `yaml:"reranker"`
 	Logging  LoggingConfig  `yaml:"logging"`
-	// Future sections: PII, Policy, Output, OTel
+	// Future sections: Policy, Output, OTel
+}
+
+// PIIConfig holds settings for the PII detection and redaction subsystem.
+type PIIConfig struct {
+	Enabled        bool                       `yaml:"enabled"`
+	Mode           string                     `yaml:"mode"` // audit | redact | block
+	AnalyzerURL    string                     `yaml:"analyzerURL"`
+	AnonymizerURL  string                     `yaml:"anonymizerURL"`
+	Language       string                     `yaml:"language"`
+	ScoreThreshold float64                    `yaml:"scoreThreshold"`
+	BlockThreshold float64                    `yaml:"blockThreshold"` // entities per 1000 chars (mode=block)
+	Entities       []string                   `yaml:"entities"`
+	Anonymizers    map[string]AnonymizerEntry `yaml:"anonymizers"`
+	Timeout        time.Duration              `yaml:"timeout"`
+}
+
+// AnonymizerEntry defines the redaction strategy for an entity type.
+type AnonymizerEntry struct {
+	Type        string `yaml:"type"`        // replace | mask
+	NewValue    string `yaml:"newValue"`    // replacement text (type=replace)
+	MaskingChar string `yaml:"maskingChar"` // mask character (type=mask)
+	CharsToMask int    `yaml:"charsToMask"` // number of chars to mask (type=mask)
+	FromEnd     bool   `yaml:"fromEnd"`     // mask from end (type=mask)
 }
 
 // RerankerConfig holds settings for the pluggable reranker subsystem.
@@ -126,6 +150,26 @@ func (c *Config) setDefaults() {
 			MaxScriptTags: 5,
 		},
 	}
+	c.PII = PIIConfig{
+		Enabled:        true,
+		Mode:           "audit",
+		AnalyzerURL:    "http://presidio-analyzer:5002",
+		AnonymizerURL:  "http://presidio-anonymizer:5001",
+		Language:       "en",
+		ScoreThreshold: 0.5,
+		BlockThreshold: 5.0,
+		Entities: []string{
+			"PERSON", "EMAIL_ADDRESS", "PHONE_NUMBER", "CREDIT_CARD",
+			"IBAN_CODE", "IP_ADDRESS", "LOCATION", "US_SSN", "MEDICAL_LICENSE",
+		},
+		Anonymizers: map[string]AnonymizerEntry{
+			"DEFAULT":       {Type: "replace", NewValue: "<REDACTED>"},
+			"PERSON":        {Type: "replace", NewValue: "<PERSON>"},
+			"EMAIL_ADDRESS": {Type: "mask", MaskingChar: "*", CharsToMask: 100, FromEnd: false},
+			"PHONE_NUMBER":  {Type: "replace", NewValue: "<PHONE>"},
+		},
+		Timeout: 5 * time.Second,
+	}
 	c.Reranker = RerankerConfig{
 		Provider: "none",
 		Endpoint: "http://reranker:8080",
@@ -187,6 +231,18 @@ func (c *Config) applyEnvOverrides() {
 	if v := os.Getenv("PALENA_SEARCH_QUERY_EXPANSION_ENABLED"); v != "" {
 		c.Search.QueryExpansion.Enabled = strings.EqualFold(v, "true")
 	}
+	if v := os.Getenv("PALENA_PII_ENABLED"); v != "" {
+		c.PII.Enabled = strings.EqualFold(v, "true")
+	}
+	if v := os.Getenv("PALENA_PII_MODE"); v != "" {
+		c.PII.Mode = v
+	}
+	if v := os.Getenv("PALENA_PII_ANALYZER_URL"); v != "" {
+		c.PII.AnalyzerURL = v
+	}
+	if v := os.Getenv("PALENA_PII_ANONYMIZER_URL"); v != "" {
+		c.PII.AnonymizerURL = v
+	}
 	if v := os.Getenv("PALENA_RERANKER_PROVIDER"); v != "" {
 		c.Reranker.Provider = v
 	}
@@ -216,6 +272,20 @@ func (c *Config) validate() error {
 	}
 	if c.Search.Timeout <= 0 {
 		return fmt.Errorf("search.timeout must be positive")
+	}
+
+	// PII validation.
+	if c.PII.Enabled {
+		validModes := map[string]bool{"audit": true, "redact": true, "block": true}
+		if !validModes[c.PII.Mode] {
+			return fmt.Errorf("pii.mode must be one of: audit, redact, block; got %q", c.PII.Mode)
+		}
+		if c.PII.AnalyzerURL == "" {
+			return fmt.Errorf("pii.analyzerURL is required when pii.enabled is true")
+		}
+		if c.PII.Timeout <= 0 {
+			return fmt.Errorf("pii.timeout must be positive")
+		}
 	}
 
 	// Reranker validation.

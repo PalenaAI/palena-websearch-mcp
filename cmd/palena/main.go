@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/bitkaio/palena-websearch-mcp/internal/config"
+	"github.com/bitkaio/palena-websearch-mcp/internal/pii"
 	"github.com/bitkaio/palena-websearch-mcp/internal/reranker"
 	"github.com/bitkaio/palena-websearch-mcp/internal/scraper"
 	"github.com/bitkaio/palena-websearch-mcp/internal/search"
@@ -60,8 +61,16 @@ func main() {
 	}
 	logger.Info("reranker initialized", "provider", rr.Name())
 
+	// Create PII processor.
+	piiProc := pii.NewProcessor(cfg.PII, logger)
+	if cfg.PII.Enabled {
+		logger.Info("pii processor initialized", "mode", cfg.PII.Mode)
+	} else {
+		logger.Info("pii processing disabled")
+	}
+
 	// Create and start MCP server.
-	srv := transport.NewServer(cfg, searchClient, sc, rr, logger)
+	srv := transport.NewServer(cfg, searchClient, sc, piiProc, rr, logger)
 
 	// Graceful shutdown on SIGINT/SIGTERM.
 	done := make(chan os.Signal, 1)
