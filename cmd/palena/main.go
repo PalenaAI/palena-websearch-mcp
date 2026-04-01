@@ -8,13 +8,14 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strings"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/bitkaio/palena-websearch-mcp/internal/config"
-	"github.com/bitkaio/palena-websearch-mcp/internal/output"
 	"github.com/bitkaio/palena-websearch-mcp/internal/scraper"
 	"github.com/bitkaio/palena-websearch-mcp/internal/search"
+	"github.com/bitkaio/palena-websearch-mcp/internal/transport"
 )
 
 func main() {
@@ -47,101 +48,34 @@ func main() {
 	}
 	logger := slog.New(handler)
 
-	logger.Info("palena starting",
-		"config", cfgPath,
-		"searxng_url", cfg.Search.SearXNGURL,
-	)
-
-	// Create the SearXNG search client.
+	// Create pipeline components.
 	searchClient := search.NewSearXNGClient(cfg.Search, logger)
+	sc := scraper.NewScraper(cfg.Scraper, logger)
 
-	// Run a hardcoded test query.
-	query := "Go programming language concurrency"
-	category := "general"
-	engines := searchClient.EnginesForCategory(category)
+	// Create and start MCP server.
+	srv := transport.NewServer(cfg, searchClient, sc, logger)
 
-	logger.Info("executing test search",
-		"query", query,
-		"category", category,
-		"engines", engines,
-	)
+	// Graceful shutdown on SIGINT/SIGTERM.
+	done := make(chan os.Signal, 1)
+	signal.Notify(done, syscall.SIGINT, syscall.SIGTERM)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	go func() {
+		if err := srv.Start(); err != nil {
+			logger.Error("server stopped", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	<-done
+	logger.Info("shutdown signal received")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	resp, err := searchClient.Search(ctx, search.SearchRequest{
-		Query:      query,
-		Engines:    engines,
-		Categories: []string{category},
-		Language:   cfg.Search.DefaultLanguage,
-		SafeSearch: cfg.Search.SafeSearch,
-		MaxResults: cfg.Search.MaxResults,
-	})
-	if err != nil {
-		logger.Error("search failed", "error", err)
+	if err := srv.Shutdown(ctx); err != nil {
+		logger.Error("shutdown error", "error", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Query:   %s\n", resp.Query)
-	fmt.Printf("Results: %d (raw from SearXNG)\n", len(resp.Results))
-
-	// Deduplicate results.
-	deduped := search.Deduplicate(resp.Results)
-	fmt.Printf("Results: %d (after deduplication)\n\n", len(deduped))
-
-	// Take top 3 URLs for scraping.
-	scrapeLimit := 3
-	if len(deduped) < scrapeLimit {
-		scrapeLimit = len(deduped)
-	}
-
-	urls := make([]string, scrapeLimit)
-	for i := 0; i < scrapeLimit; i++ {
-		urls[i] = deduped[i].URL
-	}
-
-	fmt.Printf("Scraping top %d URLs with L0 (HTTP + readability)...\n\n", scrapeLimit)
-
-	// Scrape using L0 (HTTP + go-readability).
-	sc := scraper.NewScraper(cfg.Scraper, logger)
-	results := sc.ScrapeAll(ctx, urls)
-
-	// Convert to markdown and print.
-	for i, r := range results {
-		fmt.Printf("═══════════════════════════════════════════════════════════\n")
-		fmt.Printf("[%d] %s\n", i+1, r.Title)
-		fmt.Printf("    URL: %s\n", r.URL)
-
-		if r.Err != nil {
-			fmt.Printf("    ERROR: %v\n\n", r.Err)
-			continue
-		}
-
-		if r.NeedsJS {
-			fmt.Printf("    ⚠ Content may be incomplete (page needs JavaScript)\n")
-		}
-
-		// Convert clean HTML to markdown.
-		md, err := output.HTMLToMarkdown(r.Content)
-		if err != nil {
-			fmt.Printf("    ERROR converting to markdown: %v\n\n", err)
-			continue
-		}
-
-		if md == "" {
-			fmt.Printf("    (no readable content extracted)\n\n")
-			continue
-		}
-
-		// Truncate for demo output.
-		const maxDisplay = 2000
-		display := md
-		if len(display) > maxDisplay {
-			display = display[:maxDisplay] + "\n\n... [truncated]"
-		}
-
-		fmt.Printf("    Engines: %s\n\n", strings.Join(deduped[i].Engines, ", "))
-		fmt.Println(display)
-		fmt.Println()
-	}
+	logger.Info("palena stopped")
 }
