@@ -16,11 +16,21 @@ import (
 
 // Config is the top-level configuration for the Palena MCP server.
 type Config struct {
-	Server  ServerConfig  `yaml:"server"`
-	Search  SearchConfig  `yaml:"search"`
-	Scraper ScraperConfig `yaml:"scraper"`
-	Logging LoggingConfig `yaml:"logging"`
-	// Future sections: PII, Reranker, Policy, Output, OTel
+	Server   ServerConfig   `yaml:"server"`
+	Search   SearchConfig   `yaml:"search"`
+	Scraper  ScraperConfig  `yaml:"scraper"`
+	Reranker RerankerConfig `yaml:"reranker"`
+	Logging  LoggingConfig  `yaml:"logging"`
+	// Future sections: PII, Policy, Output, OTel
+}
+
+// RerankerConfig holds settings for the pluggable reranker subsystem.
+type RerankerConfig struct {
+	Provider string        `yaml:"provider"` // kserve | flashrank | rankllm | none
+	Endpoint string        `yaml:"endpoint"` // sidecar/inference endpoint URL
+	Model    string        `yaml:"model"`    // model identifier (provider-specific)
+	TopK     int           `yaml:"topK"`     // return top K results after reranking
+	Timeout  time.Duration `yaml:"timeout"`  // reranker call timeout
 }
 
 // ScraperConfig holds tiered extraction settings.
@@ -116,6 +126,12 @@ func (c *Config) setDefaults() {
 			MaxScriptTags: 5,
 		},
 	}
+	c.Reranker = RerankerConfig{
+		Provider: "none",
+		Endpoint: "http://reranker:8080",
+		TopK:     5,
+		Timeout:  10 * time.Second,
+	}
 	c.Logging = LoggingConfig{
 		Level:  "info",
 		Format: "json",
@@ -171,6 +187,17 @@ func (c *Config) applyEnvOverrides() {
 	if v := os.Getenv("PALENA_SEARCH_QUERY_EXPANSION_ENABLED"); v != "" {
 		c.Search.QueryExpansion.Enabled = strings.EqualFold(v, "true")
 	}
+	if v := os.Getenv("PALENA_RERANKER_PROVIDER"); v != "" {
+		c.Reranker.Provider = v
+	}
+	if v := os.Getenv("PALENA_RERANKER_ENDPOINT"); v != "" {
+		c.Reranker.Endpoint = v
+	}
+	if v := os.Getenv("PALENA_RERANKER_TOP_K"); v != "" {
+		if k, err := strconv.Atoi(v); err == nil {
+			c.Reranker.TopK = k
+		}
+	}
 	if v := os.Getenv("PALENA_LOGGING_LEVEL"); v != "" {
 		c.Logging.Level = v
 	}
@@ -190,6 +217,21 @@ func (c *Config) validate() error {
 	if c.Search.Timeout <= 0 {
 		return fmt.Errorf("search.timeout must be positive")
 	}
+
+	// Reranker validation.
+	validProviders := map[string]bool{"kserve": true, "flashrank": true, "rankllm": true, "none": true, "": true}
+	if !validProviders[c.Reranker.Provider] {
+		return fmt.Errorf("reranker.provider must be one of: kserve, flashrank, rankllm, none; got %q", c.Reranker.Provider)
+	}
+	if c.Reranker.Provider != "none" && c.Reranker.Provider != "" {
+		if c.Reranker.Endpoint == "" {
+			return fmt.Errorf("reranker.endpoint is required when provider is %q", c.Reranker.Provider)
+		}
+		if c.Reranker.TopK < 1 {
+			return fmt.Errorf("reranker.topK must be >= 1, got %d", c.Reranker.TopK)
+		}
+	}
+
 	return nil
 }
 

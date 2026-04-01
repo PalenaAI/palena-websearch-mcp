@@ -15,6 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/bitkaio/palena-websearch-mcp/internal/config"
+	"github.com/bitkaio/palena-websearch-mcp/internal/reranker"
 	"github.com/bitkaio/palena-websearch-mcp/internal/scraper"
 	"github.com/bitkaio/palena-websearch-mcp/internal/search"
 )
@@ -35,6 +36,7 @@ func NewServer(
 	cfg *config.Config,
 	searchClient *search.SearXNGClient,
 	sc *scraper.Scraper,
+	rr reranker.Reranker,
 	logger *slog.Logger,
 ) *Server {
 	mcpServer := mcp.NewServer(
@@ -46,7 +48,7 @@ func NewServer(
 	)
 
 	// Register the web_search tool.
-	toolHandler := NewToolHandler(searchClient, sc, cfg, logger)
+	toolHandler := NewToolHandler(searchClient, sc, rr, cfg, logger)
 	mcp.AddTool(mcpServer, WebSearchTool(), toolHandler.HandleWebSearch)
 
 	s := &Server{

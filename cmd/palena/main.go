@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/bitkaio/palena-websearch-mcp/internal/config"
+	"github.com/bitkaio/palena-websearch-mcp/internal/reranker"
 	"github.com/bitkaio/palena-websearch-mcp/internal/scraper"
 	"github.com/bitkaio/palena-websearch-mcp/internal/search"
 	"github.com/bitkaio/palena-websearch-mcp/internal/transport"
@@ -52,8 +53,15 @@ func main() {
 	searchClient := search.NewSearXNGClient(cfg.Search, logger)
 	sc := scraper.NewScraper(cfg.Scraper, logger)
 
+	rr, err := reranker.New(cfg.Reranker, logger)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
+		os.Exit(1)
+	}
+	logger.Info("reranker initialized", "provider", rr.Name())
+
 	// Create and start MCP server.
-	srv := transport.NewServer(cfg, searchClient, sc, logger)
+	srv := transport.NewServer(cfg, searchClient, sc, rr, logger)
 
 	// Graceful shutdown on SIGINT/SIGTERM.
 	done := make(chan os.Signal, 1)

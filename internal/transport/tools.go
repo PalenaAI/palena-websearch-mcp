@@ -15,6 +15,7 @@ import (
 
 	"github.com/bitkaio/palena-websearch-mcp/internal/config"
 	"github.com/bitkaio/palena-websearch-mcp/internal/output"
+	"github.com/bitkaio/palena-websearch-mcp/internal/reranker"
 	"github.com/bitkaio/palena-websearch-mcp/internal/scraper"
 	"github.com/bitkaio/palena-websearch-mcp/internal/search"
 )
@@ -53,6 +54,7 @@ type ResultMeta struct {
 type ToolHandler struct {
 	searchClient *search.SearXNGClient
 	scraper      *scraper.Scraper
+	reranker     reranker.Reranker
 	cfg          *config.Config
 	logger       *slog.Logger
 }
@@ -61,12 +63,14 @@ type ToolHandler struct {
 func NewToolHandler(
 	searchClient *search.SearXNGClient,
 	sc *scraper.Scraper,
+	rr reranker.Reranker,
 	cfg *config.Config,
 	logger *slog.Logger,
 ) *ToolHandler {
 	return &ToolHandler{
 		searchClient: searchClient,
 		scraper:      sc,
+		reranker:     rr,
 		cfg:          cfg,
 		logger:       logger,
 	}
@@ -154,14 +158,15 @@ func (h *ToolHandler) HandleWebSearch(
 	// Stage 3: Scrape (L0 only for now).
 	scrapeResults := h.scraper.ScrapeAll(ctx, urls)
 
-	// Stage 4: Format response.
-	var contentBuilder strings.Builder
-	fmt.Fprintf(&contentBuilder, "# Search Results for: %q\n\n", input.Query)
-
-	var resultMetas []ResultMeta
-	resultNum := 0
-
-	for i, sr := range scrapeResults {
+	// Convert scrape results to markdown and build reranker documents.
+	type scrapedDoc struct {
+		URL      string
+		Title    string
+		Markdown string
+		Level    int
+	}
+	var scraped []scrapedDoc
+	for _, sr := range scrapeResults {
 		if sr.Err != nil {
 			h.logger.WarnContext(ctx, "scrape failed, skipping result",
 				"url", sr.URL, "error", sr.Err,
@@ -180,7 +185,54 @@ func (h *ToolHandler) HandleWebSearch(
 			continue
 		}
 
-		resultNum++
+		scraped = append(scraped, scrapedDoc{
+			URL:      sr.URL,
+			Title:    sr.Title,
+			Markdown: md,
+			Level:    sr.Level,
+		})
+	}
+
+	if len(scraped) == 0 {
+		return nil, WebSearchOutput{}, fmt.Errorf(
+			"all %d URLs failed to scrape for query %q", len(urls), input.Query,
+		)
+	}
+
+	// Stage 4: Rerank.
+	rerankerName := h.reranker.Name()
+	docs := make([]reranker.Document, len(scraped))
+	for i, s := range scraped {
+		docs[i] = reranker.Document{
+			Index:   i,
+			URL:     s.URL,
+			Title:   s.Title,
+			Content: s.Markdown,
+		}
+	}
+
+	ranked, err := h.reranker.Rerank(ctx, input.Query, docs)
+	if err != nil {
+		h.logger.WarnContext(ctx, "reranker failed, using original order",
+			"reranker", rerankerName, "error", err,
+		)
+		// Fallback: use original order with synthetic scores.
+		ranked = make([]reranker.RankedDocument, len(docs))
+		for i, d := range docs {
+			ranked[i] = reranker.RankedDocument{Document: d, Score: 1.0 - float64(i)*0.01, Rank: i + 1}
+		}
+		rerankerName = "none (fallback)"
+	}
+
+	// Stage 5: Format response.
+	var contentBuilder strings.Builder
+	fmt.Fprintf(&contentBuilder, "# Search Results for: %q\n\n", input.Query)
+
+	var resultMetas []ResultMeta
+
+	for _, rd := range ranked {
+		idx := rd.Document.Index
+		md := scraped[idx].Markdown
 
 		// Truncate long content.
 		const maxContentLen = 5000
@@ -188,29 +240,20 @@ func (h *ToolHandler) HandleWebSearch(
 			md = md[:maxContentLen] + "\n\n... [truncated]"
 		}
 
-		score := scores[sr.URL]
 		contentHash := fmt.Sprintf("%x", sha256.Sum256([]byte(md)))
 
-		fmt.Fprintf(&contentBuilder, "## %d. %s\n", resultNum, sr.Title)
-		fmt.Fprintf(&contentBuilder, "**Source:** %s\n", sr.URL)
-		fmt.Fprintf(&contentBuilder, "**Relevance:** %.1f\n\n", score)
+		fmt.Fprintf(&contentBuilder, "## %d. %s\n", rd.Rank, rd.Document.Title)
+		fmt.Fprintf(&contentBuilder, "**Source:** %s\n", rd.Document.URL)
+		fmt.Fprintf(&contentBuilder, "**Relevance:** %.2f\n\n", rd.Score)
 		fmt.Fprintf(&contentBuilder, "%s\n\n---\n\n", md)
 
 		resultMetas = append(resultMetas, ResultMeta{
-			URL:          sr.URL,
-			Title:        sr.Title,
-			Score:        score,
-			ScraperLevel: sr.Level,
+			URL:          rd.Document.URL,
+			Title:        rd.Document.Title,
+			Score:        rd.Score,
+			ScraperLevel: scraped[idx].Level,
 			ContentHash:  contentHash,
 		})
-
-		_ = i // used implicitly via scrapeResults range
-	}
-
-	if resultNum == 0 {
-		return nil, WebSearchOutput{}, fmt.Errorf(
-			"all %d URLs failed to scrape for query %q", len(urls), input.Query,
-		)
 	}
 
 	// Append sources footer.
@@ -220,27 +263,28 @@ func (h *ToolHandler) HandleWebSearch(
 	}
 
 	fmt.Fprintf(&contentBuilder, "\n**Metadata:**\n")
-	fmt.Fprintf(&contentBuilder, "- Results returned: %d\n", resultNum)
+	fmt.Fprintf(&contentBuilder, "- Results returned: %d\n", len(resultMetas))
 	fmt.Fprintf(&contentBuilder, "- PII mode: none (not yet enabled)\n")
-	fmt.Fprintf(&contentBuilder, "- Reranker: none\n")
+	fmt.Fprintf(&contentBuilder, "- Reranker: %s\n", rerankerName)
 	fmt.Fprintf(&contentBuilder, "- Search engines: %s\n", strings.Join(engines, ", "))
 
 	elapsed := time.Since(start)
 
 	meta := WebSearchOutput{
 		Query:         input.Query,
-		ResultCount:   resultNum,
+		ResultCount:   len(resultMetas),
 		SearchEngines: engines,
 		PIIMode:       "none",
 		PIIChecked:    false,
-		RerankerUsed:  "none",
+		RerankerUsed:  rerankerName,
 		TotalDuration: elapsed.Milliseconds(),
 		Results:       resultMetas,
 	}
 
 	h.logger.InfoContext(ctx, "web_search tool completed",
 		"query", input.Query,
-		"results", resultNum,
+		"results", len(resultMetas),
+		"reranker", rerankerName,
 		"duration_ms", elapsed.Milliseconds(),
 	)
 
