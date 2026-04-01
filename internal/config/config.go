@@ -61,7 +61,37 @@ type RerankerConfig struct {
 type ScraperConfig struct {
 	MaxConcurrency   int                    `yaml:"maxConcurrency"`
 	Timeouts         ScraperTimeoutsConfig  `yaml:"timeouts"`
+	ChromiumCDP      ChromiumCDPConfig      `yaml:"chromiumCDP"`
+	Stealth          StealthConfig          `yaml:"stealth"`
+	Proxy            ProxyConfig            `yaml:"proxy"`
 	ContentDetection ContentDetectionConfig `yaml:"contentDetection"`
+}
+
+// ChromiumCDPConfig holds settings for connecting to an external Chromium container.
+type ChromiumCDPConfig struct {
+	Endpoint string `yaml:"endpoint"` // WebSocket URL, e.g. ws://chromium:9222
+	MaxTabs  int    `yaml:"maxTabs"`  // max concurrent browser tabs
+}
+
+// StealthConfig controls anti-detection measures for L2 extraction.
+type StealthConfig struct {
+	Enabled            bool `yaml:"enabled"`
+	RandomizeViewport  bool `yaml:"randomizeViewport"`
+	RandomizeUserAgent bool `yaml:"randomizeUserAgent"`
+}
+
+// ProxyConfig holds proxy rotation settings for L2 extraction.
+type ProxyConfig struct {
+	Enabled         bool             `yaml:"enabled"`
+	Pool            []ProxyPoolEntry `yaml:"pool"`
+	CooldownSeconds int              `yaml:"cooldownSeconds"`
+}
+
+// ProxyPoolEntry defines a single proxy in the pool.
+type ProxyPoolEntry struct {
+	URL      string `yaml:"url"`      // http://user:pass@host:port or socks5://...
+	Region   string `yaml:"region"`   // optional region tag
+	Priority int    `yaml:"priority"` // higher = preferred
 }
 
 // ScraperTimeoutsConfig holds per-level timeout values.
@@ -143,6 +173,19 @@ func (c *Config) setDefaults() {
 			HTTPGet:     10 * time.Second,
 			BrowserPage: 15 * time.Second,
 			BrowserNav:  30 * time.Second,
+		},
+		ChromiumCDP: ChromiumCDPConfig{
+			Endpoint: "ws://chromium:9222",
+			MaxTabs:  3,
+		},
+		Stealth: StealthConfig{
+			Enabled:            true,
+			RandomizeViewport:  true,
+			RandomizeUserAgent: true,
+		},
+		Proxy: ProxyConfig{
+			Enabled:         false,
+			CooldownSeconds: 300,
 		},
 		ContentDetection: ContentDetectionConfig{
 			MinTextLength: 500,
@@ -230,6 +273,12 @@ func (c *Config) applyEnvOverrides() {
 	}
 	if v := os.Getenv("PALENA_SEARCH_QUERY_EXPANSION_ENABLED"); v != "" {
 		c.Search.QueryExpansion.Enabled = strings.EqualFold(v, "true")
+	}
+	if v := os.Getenv("PALENA_SCRAPER_CHROMIUM_ENDPOINT"); v != "" {
+		c.Scraper.ChromiumCDP.Endpoint = v
+	}
+	if v := os.Getenv("PALENA_SCRAPER_PROXY_ENABLED"); v != "" {
+		c.Scraper.Proxy.Enabled = strings.EqualFold(v, "true")
 	}
 	if v := os.Getenv("PALENA_PII_ENABLED"); v != "" {
 		c.PII.Enabled = strings.EqualFold(v, "true")

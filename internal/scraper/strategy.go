@@ -26,17 +26,24 @@ type ScrapeResult struct {
 }
 
 // Scraper orchestrates tiered extraction across a set of URLs.
-// Currently only L0 is implemented; L1/L2 will be added later.
 type Scraper struct {
 	l0     *L0Extractor
+	l1     *L1Extractor // nil if Chromium sidecar is not configured
+	l2     *L2Extractor // nil if stealth is not configured/enabled
 	logger *slog.Logger
 	cfg    config.ScraperConfig
 }
 
 // NewScraper creates a scraper with the configured extraction levels.
+// L1 and L2 are optional — if the Chromium sidecar endpoint is empty,
+// they are nil and URLs that fail L0 are reported as scrape failures.
 func NewScraper(cfg config.ScraperConfig, logger *slog.Logger) *Scraper {
+	proxyPool := NewProxyPool(cfg.Proxy, logger)
+
 	return &Scraper{
 		l0:     NewL0Extractor(cfg, logger),
+		l1:     NewL1Extractor(cfg, logger),
+		l2:     NewL2Extractor(cfg, proxyPool, logger),
 		logger: logger,
 		cfg:    cfg,
 	}
@@ -70,16 +77,26 @@ func (s *Scraper) ScrapeAll(ctx context.Context, urls []string) []ScrapeResult {
 	return results
 }
 
-// scrapeOne runs the tiered extraction strategy for a single URL.
-// Currently L0-only; L1/L2 escalation is stubbed.
+// scrapeOne runs the tiered extraction strategy for a single URL:
+//
+//	L0 (HTTP+readability)
+//	  → if NeedsJavaScript → L1 (headless Chromium via CDP)
+//	    → if bot-blocked → L2 (stealth + proxy)
+//	      → if still blocked → return error
+//
+// If the Chromium sidecar is unavailable, L1/L2 are skipped and URLs
+// that need JS rendering are reported as failures.
 func (s *Scraper) scrapeOne(ctx context.Context, rawURL string) ScrapeResult {
+	// --- Level 0 ---
 	result := ScrapeResult{URL: rawURL, Level: 0}
 
 	l0, err := s.l0.Extract(ctx, rawURL)
 	if err != nil {
 		result.Err = fmt.Errorf("scraper: L0 failed for %s: %w", rawURL, err)
 		s.logger.WarnContext(ctx, "L0 extraction failed", "url", rawURL, "error", err)
-		return result
+		// L0 failed entirely (network error, bad status, etc.).
+		// Still attempt L1 if available — the page might load in a browser.
+		return s.tryEscalateFromL0Failure(ctx, result)
 	}
 
 	result.Title = l0.Title
@@ -89,13 +106,119 @@ func (s *Scraper) scrapeOne(ctx context.Context, rawURL string) ScrapeResult {
 	result.SiteName = l0.SiteName
 	result.NeedsJS = l0.Assessment.NeedsJavaScript
 
-	if l0.Assessment.NeedsJavaScript {
-		s.logger.InfoContext(ctx, "L0 content thin, L1 escalation needed (not yet implemented)",
+	if !l0.Assessment.NeedsJavaScript {
+		return result
+	}
+
+	// --- Escalate to Level 1 ---
+	s.logger.InfoContext(ctx, "L0 content thin, escalating to L1",
+		"url", rawURL,
+		"text_length", l0.Assessment.TextLength,
+	)
+
+	return s.tryL1(ctx, rawURL, result)
+}
+
+// tryEscalateFromL0Failure attempts L1 when L0 fails entirely (e.g. HTTP
+// error), since the page might work in a browser context.
+func (s *Scraper) tryEscalateFromL0Failure(ctx context.Context, result ScrapeResult) ScrapeResult {
+	if s.l1 == nil {
+		return result // no Chromium → keep original L0 error
+	}
+
+	s.logger.InfoContext(ctx, "L0 failed, attempting L1 as fallback",
+		"url", result.URL,
+	)
+
+	l1Result := s.tryL1(ctx, result.URL, result)
+	if l1Result.Err != nil {
+		// Preserve the original L0 error context.
+		l1Result.Err = fmt.Errorf("scraper: L0 and L1 both failed for %s: L0: %w; L1: %v",
+			result.URL, result.Err, l1Result.Err)
+	}
+	return l1Result
+}
+
+// tryL1 attempts Level 1 extraction via headless Chromium.
+func (s *Scraper) tryL1(ctx context.Context, rawURL string, fallback ScrapeResult) ScrapeResult {
+	if s.l1 == nil {
+		s.logger.WarnContext(ctx, "L1 unavailable (no Chromium endpoint), returning L0 result",
 			"url", rawURL,
-			"text_length", l0.Assessment.TextLength,
 		)
-		// TODO: escalate to L1 (chromedp) when implemented.
-		// For now, return what L0 produced.
+		return fallback
+	}
+
+	l1, err := s.l1.Extract(ctx, rawURL)
+	if err != nil {
+		s.logger.WarnContext(ctx, "L1 extraction failed",
+			"url", rawURL,
+			"error", err,
+		)
+		fallback.Err = fmt.Errorf("scraper: L1 failed for %s: %w", rawURL, err)
+		return fallback
+	}
+
+	result := ScrapeResult{
+		URL:         rawURL,
+		Title:       l1.Title,
+		Content:     l1.Content,
+		TextContent: l1.TextContent,
+		Excerpt:     l1.Excerpt,
+		SiteName:    l1.SiteName,
+		Level:       1,
+		NeedsJS:     true,
+	}
+
+	// Check if bot-blocked → escalate to L2.
+	if l1.Bot.Blocked {
+		s.logger.InfoContext(ctx, "L1 bot-blocked, escalating to L2",
+			"url", rawURL,
+			"signal", l1.Bot.Signal,
+		)
+		return s.tryL2(ctx, rawURL, result)
+	}
+
+	return result
+}
+
+// tryL2 attempts Level 2 extraction with stealth measures and proxy rotation.
+func (s *Scraper) tryL2(ctx context.Context, rawURL string, fallback ScrapeResult) ScrapeResult {
+	if s.l2 == nil {
+		s.logger.WarnContext(ctx, "L2 unavailable (stealth not enabled), returning L1 result",
+			"url", rawURL,
+		)
+		fallback.Err = fmt.Errorf("scraper: bot-blocked at L1, L2 stealth not available for %s", rawURL)
+		return fallback
+	}
+
+	l2, err := s.l2.Extract(ctx, rawURL)
+	if err != nil {
+		s.logger.WarnContext(ctx, "L2 stealth extraction failed",
+			"url", rawURL,
+			"error", err,
+		)
+		fallback.Err = fmt.Errorf("scraper: L2 failed for %s: %w", rawURL, err)
+		return fallback
+	}
+
+	result := ScrapeResult{
+		URL:         rawURL,
+		Title:       l2.Title,
+		Content:     l2.Content,
+		TextContent: l2.TextContent,
+		Excerpt:     l2.Excerpt,
+		SiteName:    l2.SiteName,
+		Level:       2,
+		NeedsJS:     true,
+	}
+
+	// If still bot-blocked after stealth, report as error.
+	if l2.Bot.Blocked {
+		s.logger.WarnContext(ctx, "still bot-blocked after L2 stealth",
+			"url", rawURL,
+			"signal", l2.Bot.Signal,
+		)
+		result.Err = fmt.Errorf("scraper: bot-blocked at all levels for %s (signal: %s)", rawURL, l2.Bot.Signal)
 	}
 
 	return result
