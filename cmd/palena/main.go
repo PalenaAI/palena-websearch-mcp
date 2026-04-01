@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/bitkaio/palena-websearch-mcp/internal/config"
+	"github.com/bitkaio/palena-websearch-mcp/internal/output"
+	"github.com/bitkaio/palena-websearch-mcp/internal/scraper"
 	"github.com/bitkaio/palena-websearch-mcp/internal/search"
 )
 
@@ -51,12 +53,12 @@ func main() {
 	)
 
 	// Create the SearXNG search client.
-	client := search.NewSearXNGClient(cfg.Search, logger)
+	searchClient := search.NewSearXNGClient(cfg.Search, logger)
 
-	// Run a hardcoded test query to prove the search + dedup pipeline works.
+	// Run a hardcoded test query.
 	query := "Go programming language concurrency"
 	category := "general"
-	engines := client.EnginesForCategory(category)
+	engines := searchClient.EnginesForCategory(category)
 
 	logger.Info("executing test search",
 		"query", query,
@@ -64,10 +66,10 @@ func main() {
 		"engines", engines,
 	)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	resp, err := client.Search(ctx, search.SearchRequest{
+	resp, err := searchClient.Search(ctx, search.SearchRequest{
 		Query:      query,
 		Engines:    engines,
 		Categories: []string{category},
@@ -81,29 +83,65 @@ func main() {
 	}
 
 	fmt.Printf("Query:   %s\n", resp.Query)
-	fmt.Printf("Results: %d (raw from SearXNG)\n\n", len(resp.Results))
+	fmt.Printf("Results: %d (raw from SearXNG)\n", len(resp.Results))
 
 	// Deduplicate results.
 	deduped := search.Deduplicate(resp.Results)
 	fmt.Printf("Results: %d (after deduplication)\n\n", len(deduped))
 
-	// Print deduplicated results.
-	for i, r := range deduped {
-		fmt.Printf("[%d] %s\n", i+1, r.Title)
-		fmt.Printf("    URL:     %s\n", r.URL)
-		fmt.Printf("    Score:   %.2f\n", r.Score)
-		fmt.Printf("    Engines: %s\n", strings.Join(r.Engines, ", "))
-		if r.Snippet != "" {
-			snippet := r.Snippet
-			if len(snippet) > 200 {
-				snippet = snippet[:200] + "..."
-			}
-			fmt.Printf("    Snippet: %s\n", snippet)
-		}
-		fmt.Println()
+	// Take top 3 URLs for scraping.
+	scrapeLimit := 3
+	if len(deduped) < scrapeLimit {
+		scrapeLimit = len(deduped)
 	}
 
-	if len(resp.Suggestions) > 0 {
-		fmt.Printf("Suggestions: %s\n", strings.Join(resp.Suggestions, ", "))
+	urls := make([]string, scrapeLimit)
+	for i := 0; i < scrapeLimit; i++ {
+		urls[i] = deduped[i].URL
+	}
+
+	fmt.Printf("Scraping top %d URLs with L0 (HTTP + readability)...\n\n", scrapeLimit)
+
+	// Scrape using L0 (HTTP + go-readability).
+	sc := scraper.NewScraper(cfg.Scraper, logger)
+	results := sc.ScrapeAll(ctx, urls)
+
+	// Convert to markdown and print.
+	for i, r := range results {
+		fmt.Printf("═══════════════════════════════════════════════════════════\n")
+		fmt.Printf("[%d] %s\n", i+1, r.Title)
+		fmt.Printf("    URL: %s\n", r.URL)
+
+		if r.Err != nil {
+			fmt.Printf("    ERROR: %v\n\n", r.Err)
+			continue
+		}
+
+		if r.NeedsJS {
+			fmt.Printf("    ⚠ Content may be incomplete (page needs JavaScript)\n")
+		}
+
+		// Convert clean HTML to markdown.
+		md, err := output.HTMLToMarkdown(r.Content)
+		if err != nil {
+			fmt.Printf("    ERROR converting to markdown: %v\n\n", err)
+			continue
+		}
+
+		if md == "" {
+			fmt.Printf("    (no readable content extracted)\n\n")
+			continue
+		}
+
+		// Truncate for demo output.
+		const maxDisplay = 2000
+		display := md
+		if len(display) > maxDisplay {
+			display = display[:maxDisplay] + "\n\n... [truncated]"
+		}
+
+		fmt.Printf("    Engines: %s\n\n", strings.Join(deduped[i].Engines, ", "))
+		fmt.Println(display)
+		fmt.Println()
 	}
 }

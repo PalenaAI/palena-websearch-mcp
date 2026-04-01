@@ -18,8 +18,31 @@ import (
 type Config struct {
 	Server  ServerConfig  `yaml:"server"`
 	Search  SearchConfig  `yaml:"search"`
+	Scraper ScraperConfig `yaml:"scraper"`
 	Logging LoggingConfig `yaml:"logging"`
-	// Future sections: Scraper, PII, Reranker, Policy, Output, OTel
+	// Future sections: PII, Reranker, Policy, Output, OTel
+}
+
+// ScraperConfig holds tiered extraction settings.
+type ScraperConfig struct {
+	MaxConcurrency   int                    `yaml:"maxConcurrency"`
+	Timeouts         ScraperTimeoutsConfig  `yaml:"timeouts"`
+	ContentDetection ContentDetectionConfig `yaml:"contentDetection"`
+}
+
+// ScraperTimeoutsConfig holds per-level timeout values.
+type ScraperTimeoutsConfig struct {
+	HTTPGet     time.Duration `yaml:"httpGet"`
+	BrowserPage time.Duration `yaml:"browserPage"`
+	BrowserNav  time.Duration `yaml:"browserNav"`
+}
+
+// ContentDetectionConfig controls heuristics for deciding whether L0 content
+// is sufficient or needs escalation to a browser-based level.
+type ContentDetectionConfig struct {
+	MinTextLength int     `yaml:"minTextLength"`
+	MinTextRatio  float64 `yaml:"minTextRatio"`
+	MaxScriptTags int     `yaml:"maxScriptTags"`
 }
 
 // ServerConfig holds HTTP server settings.
@@ -32,13 +55,13 @@ type ServerConfig struct {
 
 // SearchConfig holds SearXNG and query-related settings.
 type SearchConfig struct {
-	SearXNGURL      string              `yaml:"searxngURL"`
-	DefaultEngines  []string            `yaml:"defaultEngines"`
-	EngineRoutes    map[string][]string `yaml:"engineRoutes"`
-	DefaultLanguage string              `yaml:"defaultLanguage"`
-	SafeSearch      int                 `yaml:"safeSearch"`
-	MaxResults      int                 `yaml:"maxResults"`
-	Timeout         time.Duration       `yaml:"timeout"`
+	SearXNGURL      string               `yaml:"searxngURL"`
+	DefaultEngines  []string             `yaml:"defaultEngines"`
+	EngineRoutes    map[string][]string  `yaml:"engineRoutes"`
+	DefaultLanguage string               `yaml:"defaultLanguage"`
+	SafeSearch      int                  `yaml:"safeSearch"`
+	MaxResults      int                  `yaml:"maxResults"`
+	Timeout         time.Duration        `yaml:"timeout"`
 	QueryExpansion  QueryExpansionConfig `yaml:"queryExpansion"`
 }
 
@@ -78,6 +101,19 @@ func (c *Config) setDefaults() {
 		QueryExpansion: QueryExpansionConfig{
 			Enabled:     false,
 			MaxVariants: 2,
+		},
+	}
+	c.Scraper = ScraperConfig{
+		MaxConcurrency: 5,
+		Timeouts: ScraperTimeoutsConfig{
+			HTTPGet:     10 * time.Second,
+			BrowserPage: 15 * time.Second,
+			BrowserNav:  30 * time.Second,
+		},
+		ContentDetection: ContentDetectionConfig{
+			MinTextLength: 500,
+			MinTextRatio:  0.05,
+			MaxScriptTags: 5,
 		},
 	}
 	c.Logging = LoggingConfig{
