@@ -1,0 +1,15 @@
+# Copyright (c) 2026 BITKAIO LLC. All rights reserved.
+# Use of this source code is governed by the AGPL-3.0 license.
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir flask flashrank
+
+COPY flashrank_server.py .
+
+ENV PORT=8080
+EXPOSE 8080
+
+CMD ["python", "flashrank_server.py"]

@@ -1,0 +1,20 @@
+{{/*
+Copyright (c) 2026 BITKAIO LLC. All rights reserved.
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "palena.fullname" . }}
+  labels:
+    {{- include "palena.labels" . | nindent 4 }}
+    app.kubernetes.io/component: server
+spec:
+  type: {{ .Values.palena.service.type }}
+  ports:
+    - port: {{ .Values.palena.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "palena.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: server

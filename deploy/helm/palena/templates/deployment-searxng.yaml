@@ -1,0 +1,61 @@
+{{/*
+Copyright (c) 2026 BITKAIO LLC. All rights reserved.
+*/}}
+{{- if .Values.searxng.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "palena.fullname" . }}-searxng
+  labels:
+    {{- include "palena.labels" . | nindent 4 }}
+    app.kubernetes.io/component: searxng
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "palena.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: searxng
+  template:
+    metadata:
+      labels:
+        {{- include "palena.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: searxng
+    spec:
+      containers:
+        - name: searxng
+          image: "{{ .Values.searxng.image.repository }}:{{ .Values.searxng.image.tag }}"
+          imagePullPolicy: {{ .Values.searxng.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.searxng.service.port }}
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /etc/searxng/settings.yml
+              subPath: searxng-settings.yml
+              readOnly: true
+          resources:
+            {{- toYaml .Values.searxng.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "palena.fullname" . }}-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "palena.fullname" . }}-searxng
+  labels:
+    {{- include "palena.labels" . | nindent 4 }}
+    app.kubernetes.io/component: searxng
+spec:
+  type: {{ .Values.searxng.service.type }}
+  ports:
+    - port: {{ .Values.searxng.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "palena.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: searxng
+{{- end }}

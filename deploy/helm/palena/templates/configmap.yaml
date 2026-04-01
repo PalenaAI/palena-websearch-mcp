@@ -1,0 +1,173 @@
+{{/*
+Copyright (c) 2026 BITKAIO LLC. All rights reserved.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "palena.fullname" . }}-config
+  labels:
+    {{- include "palena.labels" . | nindent 4 }}
+data:
+  palena.yaml: |
+    server:
+      host: {{ .Values.config.server.host | quote }}
+      port: {{ .Values.config.server.port }}
+      readTimeout: 30s
+      writeTimeout: 60s
+
+    search:
+      searxngURL: "http://{{ include "palena.fullname" . }}-searxng:{{ .Values.searxng.service.port }}"
+      defaultEngines:
+        - google
+        - duckduckgo
+        - brave
+      engineRoutes:
+        general: ["google", "duckduckgo", "brave"]
+        news: ["google news", "duckduckgo", "bing news"]
+        code: ["github", "stackoverflow", "duckduckgo"]
+        science: ["google scholar", "duckduckgo", "wikipedia"]
+      defaultLanguage: {{ .Values.config.search.defaultLanguage | quote }}
+      safeSearch: {{ .Values.config.search.safeSearch }}
+      maxResults: {{ .Values.config.search.maxResults }}
+      timeout: 10s
+      queryExpansion:
+        enabled: false
+        maxVariants: 2
+
+    scraper:
+      maxConcurrency: {{ .Values.config.scraper.maxConcurrency }}
+      timeouts:
+        httpGet: 10s
+        browserPage: 15s
+        browserNav: 30s
+      chromiumCDP:
+        {{- if .Values.chromium.enabled }}
+        endpoint: "ws://{{ include "palena.fullname" . }}-chromium:{{ .Values.chromium.service.port }}"
+        {{- else }}
+        endpoint: ""
+        {{- end }}
+        maxTabs: {{ .Values.config.scraper.maxTabs }}
+      stealth:
+        enabled: true
+        randomizeViewport: true
+        randomizeUserAgent: true
+      proxy:
+        enabled: false
+        pool: []
+        cooldownSeconds: 300
+      contentDetection:
+        minTextLength: 500
+        minTextRatio: 0.05
+        maxScriptTags: 5
+
+    pii:
+      enabled: {{ .Values.presidio.enabled }}
+      mode: {{ .Values.config.pii.mode | quote }}
+      {{- if .Values.presidio.enabled }}
+      analyzerURL: "http://{{ include "palena.fullname" . }}-presidio-analyzer:{{ .Values.presidio.analyzer.service.port }}"
+      anonymizerURL: "http://{{ include "palena.fullname" . }}-presidio-anonymizer:{{ .Values.presidio.anonymizer.service.port }}"
+      {{- else }}
+      analyzerURL: ""
+      anonymizerURL: ""
+      {{- end }}
+      language: "en"
+      scoreThreshold: 0.5
+      blockThreshold: 5.0
+      entities:
+        - PERSON
+        - EMAIL_ADDRESS
+        - PHONE_NUMBER
+        - CREDIT_CARD
+        - IBAN_CODE
+        - IP_ADDRESS
+        - LOCATION
+        - US_SSN
+        - MEDICAL_LICENSE
+      timeout: 5s
+
+    reranker:
+      {{- if .Values.flashrank.enabled }}
+      provider: "flashrank"
+      endpoint: "http://{{ include "palena.fullname" . }}-flashrank:{{ .Values.flashrank.service.port }}"
+      {{- else }}
+      provider: {{ .Values.config.reranker.provider | quote }}
+      endpoint: ""
+      {{- end }}
+      model: ""
+      topK: {{ .Values.config.reranker.topK }}
+      timeout: 10s
+
+    provenance:
+      enabled: {{ .Values.config.provenance.enabled }}
+      clickhouse:
+        enabled: false
+
+    otel:
+      enabled: {{ .Values.config.otel.enabled }}
+      serviceName: "palena"
+      traceExporter: {{ .Values.config.otel.traceExporter | quote }}
+      metricExporter: {{ .Values.config.otel.metricExporter | quote }}
+      sampleRate: 1.0
+      exportTimeout: 10s
+
+    logging:
+      level: {{ .Values.config.logging.level | quote }}
+      format: {{ .Values.config.logging.format | quote }}
+
+  searxng-settings.yml: |
+    use_default_settings: true
+    general:
+      instance_name: "palena-searxng"
+      debug: false
+    search:
+      safe_search: {{ .Values.config.search.safeSearch }}
+      default_lang: {{ .Values.config.search.defaultLanguage | quote }}
+      formats:
+        - html
+        - json
+    server:
+      port: {{ .Values.searxng.service.port }}
+      bind_address: "0.0.0.0"
+      secret_key: "palena-change-in-production"
+      limiter: false
+      public_instance: false
+    engines:
+      - name: google
+        engine: google
+        shortcut: g
+        disabled: false
+      - name: duckduckgo
+        engine: duckduckgo
+        shortcut: ddg
+        disabled: false
+      - name: brave
+        engine: brave
+        shortcut: br
+        disabled: false
+      - name: wikipedia
+        engine: wikipedia
+        shortcut: wp
+        disabled: false
+      - name: google news
+        engine: google_news
+        shortcut: gn
+        disabled: false
+      - name: bing news
+        engine: bing_news
+        shortcut: bin
+        disabled: false
+      - name: github
+        engine: github
+        shortcut: gh
+        disabled: false
+      - name: stackoverflow
+        engine: stackoverflow
+        shortcut: so
+        disabled: false
+      - name: google scholar
+        engine: google_scholar
+        shortcut: gs
+        disabled: false
+    outgoing:
+      request_timeout: 8
+      max_request_timeout: 15

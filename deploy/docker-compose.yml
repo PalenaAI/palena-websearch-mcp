@@ -1,0 +1,111 @@
+# Copyright (c) 2026 BITKAIO LLC. All rights reserved.
+# Use of this source code is governed by the AGPL-3.0 license.
+#
+# Full-stack Docker Compose for Palena MCP Server.
+# Includes all sidecars: SearXNG, Presidio, Chromium, FlashRank.
+#
+# Usage:
+#   docker compose -f deploy/docker-compose.yml up --build
+#
+# See deploy/docker-compose.minimal.yml for a lighter setup.
+
+services:
+  # ===========================================================================
+  # Palena MCP Server
+  # ===========================================================================
+  palena:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../config/palena.yaml:/config/palena.yaml:ro
+    environment:
+      PALENA_CONFIG_PATH: /config/palena.yaml
+      PALENA_SEARCH_SEARXNG_URL: http://searxng:8080
+      PALENA_SCRAPER_CHROMIUM_ENDPOINT: ws://chromium:3000
+      PALENA_PII_ANALYZER_URL: http://presidio-analyzer:5002
+      PALENA_PII_ANONYMIZER_URL: http://presidio-anonymizer:5001
+      PALENA_RERANKER_PROVIDER: flashrank
+      PALENA_RERANKER_ENDPOINT: http://flashrank:8080
+    depends_on:
+      searxng:
+        condition: service_started
+      presidio-analyzer:
+        condition: service_started
+      presidio-anonymizer:
+        condition: service_started
+      chromium:
+        condition: service_started
+      flashrank:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/palena", "--version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  # ===========================================================================
+  # SearXNG — metasearch engine (hard dependency)
+  # ===========================================================================
+  searxng:
+    image: searxng/searxng:latest
+    ports:
+      - "8888:8080"
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+    environment:
+      SEARXNG_BASE_URL: http://localhost:8888/
+    restart: unless-stopped
+
+  # ===========================================================================
+  # Presidio Analyzer — PII entity detection
+  # ===========================================================================
+  presidio-analyzer:
+    image: mcr.microsoft.com/presidio-analyzer:latest
+    ports:
+      - "5002:5002"
+    environment:
+      ANALYZER_PORT: "5002"
+    restart: unless-stopped
+
+  # ===========================================================================
+  # Presidio Anonymizer — PII masking/replacement
+  # ===========================================================================
+  presidio-anonymizer:
+    image: mcr.microsoft.com/presidio-anonymizer:latest
+    ports:
+      - "5001:5001"
+    environment:
+      ANONYMIZER_PORT: "5001"
+    restart: unless-stopped
+
+  # ===========================================================================
+  # Chromium — headless browser pool for L1/L2 scraping
+  # ===========================================================================
+  chromium:
+    image: browserless/chromium:latest
+    ports:
+      - "3000:3000"
+    environment:
+      # Connection limit matches scraper.chromiumCDP.maxTabs.
+      MAX_CONCURRENT_SESSIONS: "3"
+      TIMEOUT: "30000"
+    restart: unless-stopped
+
+  # ===========================================================================
+  # FlashRank — CPU-based cross-encoder reranker
+  # ===========================================================================
+  flashrank:
+    build:
+      context: .
+      dockerfile: Dockerfile.flashrank
+    ports:
+      - "8081:8080"
+    environment:
+      FLASHRANK_MODEL: ms-marco-MiniLM-L-12-v2
+      PORT: "8080"
+    restart: unless-stopped

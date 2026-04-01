@@ -1,0 +1,108 @@
+{{/*
+Copyright (c) 2026 BITKAIO LLC. All rights reserved.
+*/}}
+{{- if .Values.presidio.enabled }}
+# --- Presidio Analyzer ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "palena.fullname" . }}-presidio-analyzer
+  labels:
+    {{- include "palena.labels" . | nindent 4 }}
+    app.kubernetes.io/component: presidio-analyzer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "palena.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: presidio-analyzer
+  template:
+    metadata:
+      labels:
+        {{- include "palena.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: presidio-analyzer
+    spec:
+      containers:
+        - name: analyzer
+          image: "{{ .Values.presidio.analyzer.image.repository }}:{{ .Values.presidio.analyzer.image.tag }}"
+          imagePullPolicy: {{ .Values.presidio.analyzer.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.presidio.analyzer.service.port }}
+              protocol: TCP
+          env:
+            - name: ANALYZER_PORT
+              value: {{ .Values.presidio.analyzer.service.port | quote }}
+          resources:
+            {{- toYaml .Values.presidio.analyzer.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "palena.fullname" . }}-presidio-analyzer
+  labels:
+    {{- include "palena.labels" . | nindent 4 }}
+    app.kubernetes.io/component: presidio-analyzer
+spec:
+  type: {{ .Values.presidio.analyzer.service.type }}
+  ports:
+    - port: {{ .Values.presidio.analyzer.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "palena.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: presidio-analyzer
+---
+# --- Presidio Anonymizer ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "palena.fullname" . }}-presidio-anonymizer
+  labels:
+    {{- include "palena.labels" . | nindent 4 }}
+    app.kubernetes.io/component: presidio-anonymizer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "palena.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: presidio-anonymizer
+  template:
+    metadata:
+      labels:
+        {{- include "palena.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: presidio-anonymizer
+    spec:
+      containers:
+        - name: anonymizer
+          image: "{{ .Values.presidio.anonymizer.image.repository }}:{{ .Values.presidio.anonymizer.image.tag }}"
+          imagePullPolicy: {{ .Values.presidio.anonymizer.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.presidio.anonymizer.service.port }}
+              protocol: TCP
+          env:
+            - name: ANONYMIZER_PORT
+              value: {{ .Values.presidio.anonymizer.service.port | quote }}
+          resources:
+            {{- toYaml .Values.presidio.anonymizer.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "palena.fullname" . }}-presidio-anonymizer
+  labels:
+    {{- include "palena.labels" . | nindent 4 }}
+    app.kubernetes.io/component: presidio-anonymizer
+spec:
+  type: {{ .Values.presidio.anonymizer.service.type }}
+  ports:
+    - port: {{ .Values.presidio.anonymizer.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "palena.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: presidio-anonymizer
+{{- end }}

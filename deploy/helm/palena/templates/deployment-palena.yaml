@@ -1,0 +1,64 @@
+{{/*
+Copyright (c) 2026 BITKAIO LLC. All rights reserved.
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "palena.fullname" . }}
+  labels:
+    {{- include "palena.labels" . | nindent 4 }}
+    app.kubernetes.io/component: server
+spec:
+  replicas: {{ .Values.palena.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "palena.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: server
+  template:
+    metadata:
+      labels:
+        {{- include "palena.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: server
+      annotations:
+        checksum/config: {{ include (print .Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      containers:
+        - name: palena
+          image: "{{ .Values.palena.image.repository }}:{{ .Values.palena.image.tag }}"
+          imagePullPolicy: {{ .Values.palena.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.config.server.port }}
+              protocol: TCP
+          env:
+            - name: PALENA_CONFIG_PATH
+              value: /config/palena.yaml
+            {{- range $key, $value := .Values.palena.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.palena.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "palena.fullname" . }}-config
+            items:
+              - key: palena.yaml
+                path: palena.yaml

@@ -1,0 +1,181 @@
+# Copyright (c) 2026 BITKAIO LLC. All rights reserved.
+# Use of this source code is governed by the AGPL-3.0 license.
+
+# =============================================================================
+# Palena MCP Server
+# =============================================================================
+palena:
+  replicaCount: 1
+
+  image:
+    repository: ghcr.io/bitkaio/palena
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 8080
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+  # Environment variable overrides (applied on top of the ConfigMap).
+  env: {}
+    # PALENA_LOGGING_LEVEL: "debug"
+
+# =============================================================================
+# SearXNG (hard dependency — always deployed)
+# =============================================================================
+searxng:
+  enabled: true
+
+  image:
+    repository: searxng/searxng
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 8080
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# =============================================================================
+# Presidio Analyzer — PII entity detection
+# =============================================================================
+presidio:
+  enabled: true
+
+  analyzer:
+    image:
+      repository: mcr.microsoft.com/presidio-analyzer
+      tag: latest
+      pullPolicy: IfNotPresent
+
+    service:
+      type: ClusterIP
+      port: 5002
+
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+
+  anonymizer:
+    image:
+      repository: mcr.microsoft.com/presidio-anonymizer
+      tag: latest
+      pullPolicy: IfNotPresent
+
+    service:
+      type: ClusterIP
+      port: 5001
+
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+# =============================================================================
+# Chromium — headless browser pool for L1/L2 scraping
+# =============================================================================
+chromium:
+  enabled: true
+
+  image:
+    repository: browserless/chromium
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 3000
+
+  maxConcurrentSessions: 3
+
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+# =============================================================================
+# FlashRank — CPU-based cross-encoder reranker
+# =============================================================================
+flashrank:
+  enabled: false
+
+  image:
+    repository: ghcr.io/bitkaio/palena-flashrank
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 8080
+
+  model: "ms-marco-MiniLM-L-12-v2"
+
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 1Gi
+
+# =============================================================================
+# Palena configuration (rendered into ConfigMap)
+# =============================================================================
+config:
+  server:
+    host: "0.0.0.0"
+    port: 8080
+
+  search:
+    maxResults: 10
+    safeSearch: 1
+    defaultLanguage: "en"
+
+  scraper:
+    maxConcurrency: 5
+    maxTabs: 3
+
+  pii:
+    enabled: true
+    mode: "audit"
+
+  reranker:
+    provider: "none"
+    topK: 5
+
+  provenance:
+    enabled: true
+
+  otel:
+    enabled: false
+    traceExporter: "none"
+    metricExporter: "none"
+
+  logging:
+    level: "info"
+    format: "json"

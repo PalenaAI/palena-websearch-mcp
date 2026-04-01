@@ -1,0 +1,69 @@
+{{/*
+Copyright (c) 2026 BITKAIO LLC. All rights reserved.
+*/}}
+{{- if .Values.flashrank.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "palena.fullname" . }}-flashrank
+  labels:
+    {{- include "palena.labels" . | nindent 4 }}
+    app.kubernetes.io/component: flashrank
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "palena.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: flashrank
+  template:
+    metadata:
+      labels:
+        {{- include "palena.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: flashrank
+    spec:
+      containers:
+        - name: flashrank
+          image: "{{ .Values.flashrank.image.repository }}:{{ .Values.flashrank.image.tag }}"
+          imagePullPolicy: {{ .Values.flashrank.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.flashrank.service.port }}
+              protocol: TCP
+          env:
+            - name: FLASHRANK_MODEL
+              value: {{ .Values.flashrank.model | quote }}
+            - name: PORT
+              value: {{ .Values.flashrank.service.port | quote }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.flashrank.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "palena.fullname" . }}-flashrank
+  labels:
+    {{- include "palena.labels" . | nindent 4 }}
+    app.kubernetes.io/component: flashrank
+spec:
+  type: {{ .Values.flashrank.service.type }}
+  ports:
+    - port: {{ .Values.flashrank.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "palena.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: flashrank
+{{- end }}

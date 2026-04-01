@@ -1,0 +1,18 @@
+# Copyright (c) 2026 BITKAIO LLC. All rights reserved.
+# Use of this source code is governed by the AGPL-3.0 license.
+
+apiVersion: v2
+name: palena
+description: Palena MCP Server — enterprise web search for regulated industries
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - mcp
+  - web-search
+  - llm
+  - compliance
+  - pii
+maintainers:
+  - name: BITKAIO LLC
+    url: https://bitkaio.com

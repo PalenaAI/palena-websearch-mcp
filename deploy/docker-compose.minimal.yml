@@ -1,0 +1,46 @@
+# Copyright (c) 2026 BITKAIO LLC. All rights reserved.
+# Use of this source code is governed by the AGPL-3.0 license.
+#
+# Minimal Docker Compose for Palena MCP Server.
+# Only Palena + SearXNG — no PII, no browser, no reranker.
+# Smallest footprint (~200MB total).
+#
+# Usage:
+#   docker compose -f deploy/docker-compose.minimal.yml up --build
+
+services:
+  # ===========================================================================
+  # Palena MCP Server (L0 scraping only, no PII, no reranking)
+  # ===========================================================================
+  palena:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../config/palena.yaml:/config/palena.yaml:ro
+    environment:
+      PALENA_CONFIG_PATH: /config/palena.yaml
+      PALENA_SEARCH_SEARXNG_URL: http://searxng:8080
+      # Disable sidecars that are not present.
+      PALENA_PII_ENABLED: "false"
+      PALENA_SCRAPER_CHROMIUM_ENDPOINT: ""
+      PALENA_RERANKER_PROVIDER: none
+    depends_on:
+      searxng:
+        condition: service_started
+    restart: unless-stopped
+
+  # ===========================================================================
+  # SearXNG — metasearch engine (hard dependency)
+  # ===========================================================================
+  searxng:
+    image: searxng/searxng:latest
+    ports:
+      - "8888:8080"
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+    environment:
+      SEARXNG_BASE_URL: http://localhost:8888/
+    restart: unless-stopped

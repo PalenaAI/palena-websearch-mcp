@@ -1,5 +1,6 @@
 # Palena MCP Server — Default Configuration
 # See docs/CONFIG.md for full reference.
+# See config/palena.example.yaml for annotated version with all options.
 
 server:
   host: "0.0.0.0"
@@ -33,7 +34,7 @@ scraper:
     browserPage: 15s
     browserNav: 30s
   chromiumCDP:
-    endpoint: "ws://chromium:9222"
+    endpoint: "ws://chromium:3000"
     maxTabs: 3
   stealth:
     enabled: true
@@ -70,36 +71,30 @@ pii:
 
 reranker:
   provider: "none"
-  endpoint: "http://reranker:8080"
+  endpoint: "http://flashrank:8080"
   model: ""
   topK: 5
   timeout: 10s
 
-policy:
-  robots:
-    enabled: true
-    cacheSeconds: 3600
-  domains:
-    mode: "blocklist"
-    allowlist: []
-    blocklist:
-      - "example-blocked.com"
-  rateLimit:
-    enabled: true
-    requestsPerDomainPerMinute: 10
-
-output:
-  format: "markdown"
-  includeProvenance: true
-  maxContentLength: 5000
-  chunkTokenTarget: 0
+provenance:
+  enabled: true
+  clickhouse:
+    enabled: false
+    endpoint: "http://clickhouse:8123"
+    database: "palena"
+    table: "palena_provenance"
+    batchSize: 50
+    flushInterval: 5s
 
 otel:
-  enabled: true
-  endpoint: "http://otel-collector:4317"
+  enabled: false
   serviceName: "palena"
-  insecure: true
-  samplingRate: 1.0
+  traceExporter: "none"
+  traceEndpoint: "localhost:4317"
+  metricExporter: "none"
+  metricEndpoint: "localhost:4317"
+  sampleRate: 1.0
+  exportTimeout: 10s
 
 logging:
   level: "info"
