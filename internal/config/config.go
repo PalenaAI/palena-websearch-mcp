@@ -16,13 +16,14 @@ import (
 
 // Config is the top-level configuration for the Palena MCP server.
 type Config struct {
-	Server   ServerConfig   `yaml:"server"`
-	Search   SearchConfig   `yaml:"search"`
-	Scraper  ScraperConfig  `yaml:"scraper"`
-	PII      PIIConfig      `yaml:"pii"`
-	Reranker RerankerConfig `yaml:"reranker"`
-	Logging  LoggingConfig  `yaml:"logging"`
-	// Future sections: Policy, Output, OTel
+	Server     ServerConfig     `yaml:"server"`
+	Search     SearchConfig     `yaml:"search"`
+	Scraper    ScraperConfig    `yaml:"scraper"`
+	PII        PIIConfig        `yaml:"pii"`
+	Reranker   RerankerConfig   `yaml:"reranker"`
+	Provenance ProvenanceConfig `yaml:"provenance"`
+	OTel       OTelConfig       `yaml:"otel"`
+	Logging    LoggingConfig    `yaml:"logging"`
 }
 
 // PIIConfig holds settings for the PII detection and redaction subsystem.
@@ -135,6 +136,34 @@ type QueryExpansionConfig struct {
 	MaxVariants int  `yaml:"maxVariants"`
 }
 
+// ProvenanceConfig controls content provenance record generation and storage.
+type ProvenanceConfig struct {
+	Enabled    bool                       `yaml:"enabled"`
+	ClickHouse ProvenanceClickHouseConfig `yaml:"clickhouse"`
+}
+
+// ProvenanceClickHouseConfig holds optional ClickHouse export settings.
+type ProvenanceClickHouseConfig struct {
+	Enabled       bool          `yaml:"enabled"`
+	Endpoint      string        `yaml:"endpoint"`
+	Database      string        `yaml:"database"`
+	Table         string        `yaml:"table"`
+	BatchSize     int           `yaml:"batchSize"`
+	FlushInterval time.Duration `yaml:"flushInterval"`
+}
+
+// OTelConfig holds OpenTelemetry tracing and metrics configuration.
+type OTelConfig struct {
+	Enabled        bool          `yaml:"enabled"`
+	ServiceName    string        `yaml:"serviceName"`
+	TraceExporter  string        `yaml:"traceExporter"`  // otlp | stdout | none
+	TraceEndpoint  string        `yaml:"traceEndpoint"`  // OTLP gRPC endpoint
+	MetricExporter string        `yaml:"metricExporter"` // prometheus | otlp | stdout | none
+	MetricEndpoint string        `yaml:"metricEndpoint"` // OTLP gRPC endpoint for metrics
+	SampleRate     float64       `yaml:"sampleRate"`     // 0.0 to 1.0
+	ExportTimeout  time.Duration `yaml:"exportTimeout"`
+}
+
 // LoggingConfig controls structured logging.
 type LoggingConfig struct {
 	Level  string `yaml:"level"`
@@ -218,6 +247,27 @@ func (c *Config) setDefaults() {
 		Endpoint: "http://reranker:8080",
 		TopK:     5,
 		Timeout:  10 * time.Second,
+	}
+	c.Provenance = ProvenanceConfig{
+		Enabled: true,
+		ClickHouse: ProvenanceClickHouseConfig{
+			Enabled:       false,
+			Endpoint:      "http://clickhouse:8123",
+			Database:      "palena",
+			Table:         "palena_provenance",
+			BatchSize:     50,
+			FlushInterval: 5 * time.Second,
+		},
+	}
+	c.OTel = OTelConfig{
+		Enabled:        false,
+		ServiceName:    "palena",
+		TraceExporter:  "none",
+		TraceEndpoint:  "localhost:4317",
+		MetricExporter: "none",
+		MetricEndpoint: "localhost:4317",
+		SampleRate:     1.0,
+		ExportTimeout:  10 * time.Second,
 	}
 	c.Logging = LoggingConfig{
 		Level:  "info",
@@ -303,6 +353,30 @@ func (c *Config) applyEnvOverrides() {
 			c.Reranker.TopK = k
 		}
 	}
+	if v := os.Getenv("PALENA_PROVENANCE_ENABLED"); v != "" {
+		c.Provenance.Enabled = strings.EqualFold(v, "true")
+	}
+	if v := os.Getenv("PALENA_PROVENANCE_CLICKHOUSE_ENABLED"); v != "" {
+		c.Provenance.ClickHouse.Enabled = strings.EqualFold(v, "true")
+	}
+	if v := os.Getenv("PALENA_PROVENANCE_CLICKHOUSE_ENDPOINT"); v != "" {
+		c.Provenance.ClickHouse.Endpoint = v
+	}
+	if v := os.Getenv("PALENA_OTEL_ENABLED"); v != "" {
+		c.OTel.Enabled = strings.EqualFold(v, "true")
+	}
+	if v := os.Getenv("PALENA_OTEL_TRACE_EXPORTER"); v != "" {
+		c.OTel.TraceExporter = v
+	}
+	if v := os.Getenv("PALENA_OTEL_TRACE_ENDPOINT"); v != "" {
+		c.OTel.TraceEndpoint = v
+	}
+	if v := os.Getenv("PALENA_OTEL_METRIC_EXPORTER"); v != "" {
+		c.OTel.MetricExporter = v
+	}
+	if v := os.Getenv("PALENA_OTEL_METRIC_ENDPOINT"); v != "" {
+		c.OTel.MetricEndpoint = v
+	}
 	if v := os.Getenv("PALENA_LOGGING_LEVEL"); v != "" {
 		c.Logging.Level = v
 	}
@@ -348,6 +422,31 @@ func (c *Config) validate() error {
 		}
 		if c.Reranker.TopK < 1 {
 			return fmt.Errorf("reranker.topK must be >= 1, got %d", c.Reranker.TopK)
+		}
+	}
+
+	// OTel validation.
+	if c.OTel.Enabled {
+		validTraceExporters := map[string]bool{"otlp": true, "stdout": true, "none": true}
+		if !validTraceExporters[c.OTel.TraceExporter] {
+			return fmt.Errorf("otel.traceExporter must be one of: otlp, stdout, none; got %q", c.OTel.TraceExporter)
+		}
+		validMetricExporters := map[string]bool{"prometheus": true, "otlp": true, "stdout": true, "none": true}
+		if !validMetricExporters[c.OTel.MetricExporter] {
+			return fmt.Errorf("otel.metricExporter must be one of: prometheus, otlp, stdout, none; got %q", c.OTel.MetricExporter)
+		}
+		if c.OTel.SampleRate < 0 || c.OTel.SampleRate > 1 {
+			return fmt.Errorf("otel.sampleRate must be between 0.0 and 1.0, got %f", c.OTel.SampleRate)
+		}
+	}
+
+	// Provenance ClickHouse validation.
+	if c.Provenance.ClickHouse.Enabled {
+		if c.Provenance.ClickHouse.Endpoint == "" {
+			return fmt.Errorf("provenance.clickhouse.endpoint is required when enabled")
+		}
+		if c.Provenance.ClickHouse.BatchSize < 1 {
+			return fmt.Errorf("provenance.clickhouse.batchSize must be >= 1, got %d", c.Provenance.ClickHouse.BatchSize)
 		}
 	}
 

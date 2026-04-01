@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/bitkaio/palena-websearch-mcp/internal/config"
+	palenaOTel "github.com/bitkaio/palena-websearch-mcp/internal/otel"
+	"github.com/bitkaio/palena-websearch-mcp/internal/output"
 	"github.com/bitkaio/palena-websearch-mcp/internal/pii"
 	"github.com/bitkaio/palena-websearch-mcp/internal/reranker"
 	"github.com/bitkaio/palena-websearch-mcp/internal/scraper"
@@ -50,6 +52,21 @@ func main() {
 	}
 	logger := slog.New(handler)
 
+	// Initialize OpenTelemetry tracing.
+	initCtx := context.Background()
+	traceShutdown, err := palenaOTel.InitTracing(initCtx, cfg.OTel, logger)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Initialize OpenTelemetry metrics.
+	meters, promHandler, metricShutdown, err := palenaOTel.InitMetrics(initCtx, cfg.OTel, logger)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
+		os.Exit(1)
+	}
+
 	// Create pipeline components.
 	searchClient := search.NewSearXNGClient(cfg.Search, logger)
 	sc := scraper.NewScraper(cfg.Scraper, logger)
@@ -69,8 +86,16 @@ func main() {
 		logger.Info("pii processing disabled")
 	}
 
+	// Create provenance ClickHouse exporter (nil if disabled).
+	provExporter := output.NewClickHouseExporter(cfg.Provenance.ClickHouse, logger)
+	if cfg.Provenance.Enabled {
+		logger.Info("provenance recording enabled",
+			"clickhouse", cfg.Provenance.ClickHouse.Enabled,
+		)
+	}
+
 	// Create and start MCP server.
-	srv := transport.NewServer(cfg, searchClient, sc, piiProc, rr, logger)
+	srv := transport.NewServer(cfg, searchClient, sc, piiProc, rr, meters, provExporter, promHandler, logger)
 
 	// Graceful shutdown on SIGINT/SIGTERM.
 	done := make(chan os.Signal, 1)
@@ -92,6 +117,19 @@ func main() {
 	if err := srv.Shutdown(ctx); err != nil {
 		logger.Error("shutdown error", "error", err)
 		os.Exit(1)
+	}
+
+	// Flush provenance records.
+	if provExporter != nil {
+		provExporter.Close()
+	}
+
+	// Shut down OTel providers.
+	if err := traceShutdown(ctx); err != nil {
+		logger.Error("otel trace shutdown error", "error", err)
+	}
+	if err := metricShutdown(ctx); err != nil {
+		logger.Error("otel metric shutdown error", "error", err)
 	}
 
 	logger.Info("palena stopped")

@@ -15,6 +15,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/bitkaio/palena-websearch-mcp/internal/config"
+	palenaOTel "github.com/bitkaio/palena-websearch-mcp/internal/otel"
+	"github.com/bitkaio/palena-websearch-mcp/internal/output"
 	"github.com/bitkaio/palena-websearch-mcp/internal/pii"
 	"github.com/bitkaio/palena-websearch-mcp/internal/reranker"
 	"github.com/bitkaio/palena-websearch-mcp/internal/scraper"
@@ -39,6 +41,9 @@ func NewServer(
 	sc *scraper.Scraper,
 	piiProc *pii.Processor,
 	rr reranker.Reranker,
+	meters *palenaOTel.Meters,
+	provExporter *output.ClickHouseExporter,
+	promHandler http.Handler,
 	logger *slog.Logger,
 ) *Server {
 	mcpServer := mcp.NewServer(
@@ -50,7 +55,7 @@ func NewServer(
 	)
 
 	// Register the web_search tool.
-	toolHandler := NewToolHandler(searchClient, sc, piiProc, rr, cfg, logger)
+	toolHandler := NewToolHandler(searchClient, sc, piiProc, rr, cfg, meters, provExporter, logger)
 	mcp.AddTool(mcpServer, WebSearchTool(), toolHandler.HandleWebSearch)
 
 	s := &Server{
@@ -79,6 +84,11 @@ func NewServer(
 
 	// Operational endpoints.
 	mux.HandleFunc("GET /health", s.handleHealth)
+
+	// Prometheus metrics endpoint (if configured).
+	if promHandler != nil {
+		mux.Handle("/metrics", promHandler)
+	}
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	s.httpServer = &http.Server{
