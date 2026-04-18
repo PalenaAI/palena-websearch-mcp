@@ -24,7 +24,7 @@ You do **not** need a GPU. You do **not** need to install Go, Node, or Python â€
 Clone the repository and start the full Compose file. It pulls the upstream SearXNG, Presidio, and Playwright images, then builds Palena and a small FlashRank sidecar on first run.
 
 ```bash
-git clone https://github.com/bitkaio/palena-websearch-mcp.git
+git clone https://github.com/PalenaAI/palena-websearch-mcp.git
 cd palena-websearch-mcp
 docker compose -f deploy/docker-compose.yml up --build
 ```

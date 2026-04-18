@@ -173,4 +173,4 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md) in the repository root.
 
 ## Where do I report bugs or ask questions?
 
-Open an issue or a discussion at the [bitkaio/palena-websearch-mcp](https://github.com/bitkaio/palena-websearch-mcp) GitHub repository. For commercial support, custom models, or production SLAs, email `hello@bitkaio.com`.
+Open an issue or a discussion at the [PalenaAI/palena-websearch-mcp](https://github.com/PalenaAI/palena-websearch-mcp) GitHub repository. For commercial support, custom models, or production SLAs, email `opensource@bitkaio.com`.

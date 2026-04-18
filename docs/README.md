@@ -55,4 +55,4 @@ This site is the reference documentation. If you are new, start with [Getting St
 
 ## Support and licensing
 
-Palena is published by [bitkaio LLC](https://github.com/bitkaio) under the Apache License, Version 2.0. Commercial support, custom reranker models, and production SLAs are available — email `hello@bitkaio.com` or open a discussion on the GitHub repository.
+Palena is published by [bitkaio LLC](https://github.com/PalenaAI) under the Apache License, Version 2.0. Commercial support, custom reranker models, and production SLAs are available — email `opensource@bitkaio.com` or open a discussion on the GitHub repository.
