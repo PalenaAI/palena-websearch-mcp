@@ -1,0 +1,355 @@
+# Copyright (c) 2026 bitkaio LLC. All rights reserved.
+# Licensed under the Apache License, Version 2.0. See LICENSE for details.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/palenaai/palena-websearch-mcp
+
+jobs:
+
+  verify:
+    name: Verify (tests + lint)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2.18.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
+        with:
+          version: latest
+          args: --timeout=5m
+
+      - name: Test
+        run: go test -race ./...
+
+  build-and-publish:
+    name: Build & Publish Image
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    outputs:
+      image: ${{ steps.meta.outputs.tags }}
+      digest: ${{ steps.build.outputs.digest }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2.18.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Resolve version from tag
+        id: version
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${REF_NAME#v}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${REF_NAME}" >> "$GITHUB_OUTPUT"
+          echo "Release version: ${version} (tag ${REF_NAME})"
+
+      - name: Setup QEMU (multi-arch emulation)
+        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
+
+      - name: Setup Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Login to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+          labels: |
+            org.opencontainers.image.title=palena-websearch-mcp
+            org.opencontainers.image.vendor=bitkaio LLC
+            org.opencontainers.image.licenses=Apache-2.0
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+
+      - name: Build & push (multi-arch)
+        id: build
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        with:
+          context: .
+          file: deploy/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  sign-and-attest:
+    name: Sign, SBOM & Scan
+    needs: build-and-publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2.18.0
+        with:
+          egress-policy: audit
+
+      - name: Login to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
+        with:
+          cosign-release: "v2.5.3"
+
+      - name: Sign image (keyless, OIDC)
+        env:
+          DIGEST: ${{ needs.build-and-publish.outputs.digest }}
+          COSIGN_YES: "true"
+        run: |
+          set -euo pipefail
+          cosign sign --yes "${IMAGE_NAME}@${DIGEST}"
+
+      - name: Install syft
+        env:
+          SYFT_VERSION: "1.18.0"
+        run: |
+          set -euo pipefail
+          curl -sfL "https://raw.githubusercontent.com/anchore/syft/v${SYFT_VERSION}/install.sh" \
+            | sh -s -- -b /usr/local/bin "v${SYFT_VERSION}"
+          syft version
+
+      - name: Generate CycloneDX SBOM
+        env:
+          DIGEST: ${{ needs.build-and-publish.outputs.digest }}
+        run: |
+          set -euo pipefail
+          syft "${IMAGE_NAME}@${DIGEST}" -o cyclonedx-json=sbom.cdx.json
+          syft "${IMAGE_NAME}@${DIGEST}" -o spdx-json=sbom.spdx.json
+
+      - name: Attest SBOM with cosign
+        env:
+          DIGEST: ${{ needs.build-and-publish.outputs.digest }}
+          COSIGN_YES: "true"
+        run: |
+          set -euo pipefail
+          cosign attest --yes \
+            --predicate sbom.cdx.json \
+            --type cyclonedx \
+            "${IMAGE_NAME}@${DIGEST}"
+
+      - name: Install Trivy
+        env:
+          TRIVY_VERSION: "0.70.0"
+        run: |
+          set -euo pipefail
+          curl -sfLo /tmp/trivy.tgz \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -sfLo /tmp/trivy_checksums.txt \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_checksums.txt"
+          expected=$(grep "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" /tmp/trivy_checksums.txt | awk '{print $1}')
+          actual=$(sha256sum /tmp/trivy.tgz | awk '{print $1}')
+          if [ "$expected" != "$actual" ]; then
+            echo "Trivy checksum mismatch" >&2
+            exit 1
+          fi
+          tar -xzf /tmp/trivy.tgz -C /tmp trivy
+          sudo install -m 0755 /tmp/trivy /usr/local/bin/trivy
+
+      - name: Trivy scan (JSON for release asset)
+        env:
+          DIGEST: ${{ needs.build-and-publish.outputs.digest }}
+        run: |
+          trivy image \
+            --exit-code 0 \
+            --severity HIGH,CRITICAL \
+            --format json \
+            --output trivy-report.json \
+            --ignore-unfixed \
+            "${IMAGE_NAME}@${DIGEST}"
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-assets
+          path: |
+            sbom.cdx.json
+            sbom.spdx.json
+            trivy-report.json
+          if-no-files-found: error
+          retention-days: 90
+
+  # SLSA Level 3 provenance for the container image.
+  # Reusable workflows must be referenced by tag (SLSA generator pins internal
+  # actions for us and only accepts tag references).
+  provenance:
+    name: SLSA Provenance
+    needs: build-and-publish
+    permissions:
+      actions: read
+      id-token: write
+      packages: write
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0
+    with:
+      image: ghcr.io/palenaai/palena-websearch-mcp
+      digest: ${{ needs.build-and-publish.outputs.digest }}
+      registry-username: ${{ github.actor }}
+    secrets:
+      registry-password: ${{ secrets.GITHUB_TOKEN }}
+
+  github-release:
+    name: GitHub Release
+    needs: [build-and-publish, sign-and-attest, provenance]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2.18.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Download release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-assets
+          path: release-assets
+
+      - name: Extract changelog section for this tag
+        id: changelog
+        env:
+          VERSION: ${{ needs.build-and-publish.outputs.version }}
+          IMAGE: ${{ env.IMAGE_NAME }}
+          DIGEST: ${{ needs.build-and-publish.outputs.digest }}
+        run: |
+          set -euo pipefail
+
+          # Pull the section under `## [VERSION]` (optionally followed by a date),
+          # stopping at the next top-level `## [` heading. Keep a Changelog format.
+          python3 - <<'PY' > release-body.md
+          import os
+          import re
+          import sys
+
+          version = os.environ["VERSION"]
+          image = os.environ["IMAGE"]
+          digest = os.environ["DIGEST"]
+
+          with open("CHANGELOG.md", "r", encoding="utf-8") as fh:
+              text = fh.read()
+
+          heading = re.compile(
+              rf"^##\s*\[{re.escape(version)}\].*?$",
+              re.IGNORECASE | re.MULTILINE,
+          )
+          match = heading.search(text)
+          if not match:
+              sys.stderr.write(
+                  f"::warning::no changelog section found for version {version}; "
+                  "falling back to generic body\n"
+              )
+              body = (
+                  f"Release {version}.\n\n"
+                  f"No matching section in CHANGELOG.md — update the changelog "
+                  f"and re-tag for a richer release description.\n"
+              )
+          else:
+              start = match.start()
+              rest = text[match.end():]
+              next_heading = re.search(r"^##\s*\[", rest, re.MULTILINE)
+              end = match.end() + (next_heading.start() if next_heading else len(rest))
+              body = text[start:end].strip() + "\n"
+
+          provenance = (
+              "\n---\n\n"
+              "### Container image\n\n"
+              f"- `{image}:{version}`\n"
+              f"- Digest: `{digest}`\n\n"
+              "### Supply-chain artifacts\n\n"
+              "- CycloneDX SBOM: `sbom.cdx.json` (attached + cosign attestation)\n"
+              "- SPDX SBOM: `sbom.spdx.json` (attached)\n"
+              "- Trivy HIGH/CRITICAL scan report: `trivy-report.json` (attached)\n"
+              "- Image signature: Sigstore keyless (cosign, GitHub OIDC)\n"
+              "- SLSA provenance: Level 3 (attached via slsa-github-generator)\n\n"
+              "Verify the image signature:\n\n"
+              "```sh\n"
+              "cosign verify \\\n"
+              f"  --certificate-identity-regexp 'https://github.com/{os.environ.get(\"GITHUB_REPOSITORY\", \"PalenaAI/palena-websearch-mcp\")}/' \\\n"
+              "  --certificate-oidc-issuer https://token.actions.githubusercontent.com \\\n"
+              f"  {image}@{digest}\n"
+              "```\n"
+          )
+
+          sys.stdout.write(body + provenance)
+          PY
+
+          echo "body_path=release-body.md" >> "$GITHUB_OUTPUT"
+          echo "----- release body preview -----"
+          head -n 40 release-body.md
+          echo "--------------------------------"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
+        with:
+          body_path: ${{ steps.changelog.outputs.body_path }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: false
+          files: |
+            release-assets/sbom.cdx.json
+            release-assets/sbom.spdx.json
+            release-assets/trivy-report.json

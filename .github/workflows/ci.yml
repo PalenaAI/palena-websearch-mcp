@@ -1,0 +1,460 @@
+# Copyright (c) 2026 bitkaio LLC. All rights reserved.
+# Licensed under the Apache License, Version 2.0. See LICENSE for details.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE_NAME: ghcr.io/palenaai/palena-websearch-mcp
+  GO_CACHE_PATH: |
+    ~/.cache/go-build
+    ~/go/pkg/mod
+
+jobs:
+
+  lint-and-test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2.18.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify go.mod / go.sum are tidy
+        run: |
+          go mod download
+          go mod verify
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
+        with:
+          version: latest
+          args: --timeout=5m
+
+      - name: Test
+        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: go-coverage
+          path: coverage.out
+          if-no-files-found: warn
+          retention-days: 7
+
+  security:
+    name: Security Scans (Semgrep + Hadolint)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2.18.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install Semgrep
+        run: python -m pip install --upgrade "semgrep==1.118.0"
+
+      - name: Run Semgrep (Go + OWASP + Docker)
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+        run: |
+          semgrep scan \
+            --config p/golang \
+            --config p/security-audit \
+            --config p/owasp-top-ten \
+            --config p/dockerfile \
+            --severity ERROR \
+            --error \
+            --sarif --output=semgrep.sarif \
+            --metrics=off
+
+      - name: Upload Semgrep SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@65216971a11ded447a6b76263d5a144519e5eee1 # codeql-bundle-v2.25.2
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+      - name: Hadolint (deploy/Dockerfile)
+        uses: hadolint/hadolint-action@2332a7b74a6de0dda2e2221d575162eba76ba5e5 # v3.3.0
+        with:
+          dockerfile: deploy/Dockerfile
+          format: sarif
+          output-file: hadolint-main.sarif
+          no-fail: false
+
+      - name: Hadolint (deploy/Dockerfile.flashrank)
+        uses: hadolint/hadolint-action@2332a7b74a6de0dda2e2221d575162eba76ba5e5 # v3.3.0
+        with:
+          dockerfile: deploy/Dockerfile.flashrank
+          format: sarif
+          output-file: hadolint-flashrank.sarif
+          no-fail: false
+
+      - name: Upload Hadolint SARIF (main)
+        if: always()
+        uses: github/codeql-action/upload-sarif@65216971a11ded447a6b76263d5a144519e5eee1 # codeql-bundle-v2.25.2
+        with:
+          sarif_file: hadolint-main.sarif
+          category: hadolint-main
+
+      - name: Upload Hadolint SARIF (flashrank)
+        if: always()
+        uses: github/codeql-action/upload-sarif@65216971a11ded447a6b76263d5a144519e5eee1 # codeql-bundle-v2.25.2
+        with:
+          sarif_file: hadolint-flashrank.sarif
+          category: hadolint-flashrank
+
+  workflow-security:
+    name: Workflow Security (zizmor)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2.18.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install zizmor
+        run: python -m pip install --upgrade "zizmor==1.17.0"
+
+      - name: Run zizmor (SARIF)
+        run: zizmor --format sarif --pedantic .github/workflows/ > zizmor.sarif
+        continue-on-error: true
+
+      - name: Upload zizmor SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@65216971a11ded447a6b76263d5a144519e5eee1 # codeql-bundle-v2.25.2
+        with:
+          sarif_file: zizmor.sarif
+          category: zizmor
+
+      - name: Run zizmor (fail on HIGH)
+        run: zizmor --min-severity high --format plain .github/workflows/
+
+  dependency-review:
+    name: Dependency Review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2.18.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
+          license-check: true
+          allow-licenses: >-
+            Apache-2.0, MIT, BSD-2-Clause, BSD-3-Clause, ISC, MPL-2.0, CC0-1.0, Unlicense, 0BSD
+
+  conventional-commits:
+    name: Conventional Commits
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2.18.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Validate conventional commits
+        uses: webiny/action-conventional-commits@8bc41ff4e7d423d56fa4905f6ff79209a78776c7 # v1.3.0
+
+  license-headers:
+    name: License Headers
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2.18.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Check Apache 2.0 license headers
+        uses: apache/skywalking-eyes@61275cc80d0798a405cb070f7d3a8aaf7cf2c2c1 # v0.8.0
+        with:
+          mode: check
+          config: .licenserc.yaml
+
+  markdown-lint:
+    name: Markdown Lint
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2.18.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install markdownlint-cli2
+        run: npm install --no-save --no-audit --no-fund markdownlint-cli2@0.18.1
+
+      - name: Run markdownlint
+        run: npx markdownlint-cli2 "**/*.md" "#node_modules" "#tmp" "#vendor"
+
+  codeql:
+    name: CodeQL
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2.18.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@65216971a11ded447a6b76263d5a144519e5eee1 # codeql-bundle-v2.25.2
+        with:
+          languages: go
+          queries: security-extended,security-and-quality
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@65216971a11ded447a6b76263d5a144519e5eee1 # codeql-bundle-v2.25.2
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@65216971a11ded447a6b76263d5a144519e5eee1 # codeql-bundle-v2.25.2
+        with:
+          category: "/language:go"
+
+  vulncheck:
+    name: govulncheck
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2.18.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck
+        run: govulncheck ./...
+
+  container-scan:
+    name: Container Build & Scan
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2.18.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Build image (load only, do not push)
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        with:
+          context: .
+          file: deploy/Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: ${{ env.IMAGE_NAME }}:ci-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install Trivy (CLI)
+        env:
+          TRIVY_VERSION: "0.70.0"
+          TRIVY_SHA256: "cc7b4ee0e04c6b0d6cabaef98fdccbdf611ce3d20d05f6e0ee5a5bb5e2d8a5c9"
+        run: |
+          set -euo pipefail
+          curl -sfLo /tmp/trivy.tgz \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          # Fetch official checksum file from the release and verify against it.
+          curl -sfLo /tmp/trivy_checksums.txt \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_checksums.txt"
+          expected=$(grep "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" /tmp/trivy_checksums.txt | awk '{print $1}')
+          actual=$(sha256sum /tmp/trivy.tgz | awk '{print $1}')
+          if [ "$expected" != "$actual" ]; then
+            echo "Trivy checksum mismatch: expected=$expected actual=$actual" >&2
+            exit 1
+          fi
+          tar -xzf /tmp/trivy.tgz -C /tmp trivy
+          sudo install -m 0755 /tmp/trivy /usr/local/bin/trivy
+          trivy --version
+
+      - name: Trivy scan (JSON report)
+        run: |
+          trivy image \
+            --exit-code 0 \
+            --severity HIGH,CRITICAL \
+            --format json \
+            --output trivy-report.json \
+            --ignore-unfixed \
+            "${IMAGE_NAME}:ci-${{ github.sha }}"
+
+      - name: Trivy scan (SARIF for Security tab)
+        run: |
+          trivy image \
+            --exit-code 0 \
+            --severity HIGH,CRITICAL \
+            --format sarif \
+            --output trivy.sarif \
+            --ignore-unfixed \
+            "${IMAGE_NAME}:ci-${{ github.sha }}"
+
+      - name: Trivy scan (fail build on HIGH/CRITICAL)
+        run: |
+          trivy image \
+            --exit-code 1 \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            "${IMAGE_NAME}:ci-${{ github.sha }}"
+
+      - name: Install syft (SBOM)
+        env:
+          SYFT_VERSION: "1.18.0"
+        run: |
+          set -euo pipefail
+          curl -sfL "https://raw.githubusercontent.com/anchore/syft/v${SYFT_VERSION}/install.sh" \
+            | sh -s -- -b /usr/local/bin "v${SYFT_VERSION}"
+          syft version
+
+      - name: Generate CycloneDX SBOM
+        run: |
+          syft "${IMAGE_NAME}:ci-${{ github.sha }}" \
+            -o cyclonedx-json=sbom.cdx.json
+
+      - name: Upload Trivy SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@65216971a11ded447a6b76263d5a144519e5eee1 # codeql-bundle-v2.25.2
+        with:
+          sarif_file: trivy.sarif
+          category: trivy-image
+
+      - name: Upload scan artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: container-scan-reports
+          path: |
+            trivy-report.json
+            trivy.sarif
+            sbom.cdx.json
+          if-no-files-found: error
+          retention-days: 30

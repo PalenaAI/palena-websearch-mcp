@@ -1,0 +1,86 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits",
+    "helpers:pinGitHubActionDigests",
+    "security:openssf-scorecard",
+    ":separateMajorReleases",
+    ":prHourlyLimit4",
+    ":prConcurrentLimit10"
+  ],
+  "timezone": "UTC",
+  "schedule": ["before 6am on Monday"],
+  "labels": ["dependencies", "automated"],
+  "assignees": ["PalenaAI/maintainers"],
+  "commitMessagePrefix": "chore(deps):",
+  "rangeStrategy": "bump",
+  "postUpdateOptions": ["gomodTidy", "gomodUpdateImportPaths"],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on the first day of the month"]
+  },
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["security", "dependencies"],
+    "schedule": ["at any time"]
+  },
+  "osvVulnerabilityAlerts": true,
+  "packageRules": [
+    {
+      "description": "Group GitHub Actions updates into a single PR",
+      "matchManagers": ["github-actions"],
+      "groupName": "github actions",
+      "pinDigests": true,
+      "commitMessageTopic": "github actions"
+    },
+    {
+      "description": "Group Go module minor + patch updates",
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "go modules (minor + patch)"
+    },
+    {
+      "description": "Flag Go major updates individually",
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["major"],
+      "labels": ["dependencies", "breaking"]
+    },
+    {
+      "description": "Container base image updates — keep isolated for review",
+      "matchManagers": ["dockerfile", "docker-compose"],
+      "labels": ["dependencies", "container"]
+    },
+    {
+      "description": "Auto-merge GitHub Actions digest bumps for widely-used Actions",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["digest", "pin", "pinDigest"],
+      "automerge": false
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Track Trivy CLI version pinned in workflow env blocks",
+      "fileMatch": ["^\\.github/workflows/.+\\.ya?ml$"],
+      "matchStrings": [
+        "TRIVY_VERSION:\\s*\"(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\""
+      ],
+      "depNameTemplate": "aquasecurity/trivy",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "Track syft CLI version pinned in workflow env blocks",
+      "fileMatch": ["^\\.github/workflows/.+\\.ya?ml$"],
+      "matchStrings": [
+        "SYFT_VERSION:\\s*\"(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\""
+      ],
+      "depNameTemplate": "anchore/syft",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.+)$"
+    }
+  ]
+}

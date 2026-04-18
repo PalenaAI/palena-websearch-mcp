@@ -1,0 +1,52 @@
+# apache/skywalking-eyes configuration — Apache 2.0 license header enforcement.
+# Checked in CI via .github/workflows/ci.yml (license-headers job).
+
+header:
+  license:
+    spdx-id: Apache-2.0
+    copyright-owner: bitkaio LLC
+    copyright-year: "2026"
+    content: |
+      Copyright (c) [year] [owner]. All rights reserved.
+      Licensed under the Apache License, Version 2.0. See LICENSE for details.
+    # Match either the canonical header above or the legacy AGPL banner still
+    # present on pre-2026-04 files (bulk header migration pending).
+    pattern: |
+      (?i)Licensed under the Apache License, Version 2\.0|
+      (?i)Licensed under the AGPL
+
+  paths:
+    - "**/*.go"
+    - "cmd/**/*.go"
+    - "internal/**/*.go"
+    - "deploy/Dockerfile"
+    - "deploy/Dockerfile.flashrank"
+    - ".github/workflows/*.yml"
+
+  paths-ignore:
+    - "**/*.md"
+    - "**/*.yaml"
+    - "**/*.yml"
+    - "**/*.json"
+    - "**/*.txt"
+    - "**/testdata/**"
+    - "**/vendor/**"
+    - "**/*.pb.go"
+    - "go.mod"
+    - "go.sum"
+    - "LICENSE"
+    - "NOTICE"
+    - "CHANGELOG.md"
+    - "README.md"
+    - "CLAUDE.md"
+    - "SECURITY.md"
+    - "CLA.md"
+    - "CONTRIBUTING.md"
+    - "palena"
+    - "tmp/**"
+    - "deploy/helm/**"
+    - "deploy/searxng/**"
+    - ".github/ISSUE_TEMPLATE/**"
+    - ".licenserc.yaml"
+
+  comment: on-failure

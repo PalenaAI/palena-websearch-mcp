@@ -1,0 +1,17 @@
+# CODEOWNERS — required reviewers for paths in this repository.
+# Order matters: the last matching pattern wins. Keep security-sensitive paths
+# near the bottom so they override broader rules.
+
+# Default owners for everything in the repo.
+*                                   @PalenaAI/maintainers
+
+# CI/CD and supply-chain configuration must be reviewed by the security team.
+/.github/workflows/                 @PalenaAI/maintainers @PalenaAI/security
+/.github/dco.yml                    @PalenaAI/maintainers @PalenaAI/security
+/.github/CODEOWNERS                 @PalenaAI/maintainers @PalenaAI/security
+/renovate.json                      @PalenaAI/maintainers @PalenaAI/security
+/.licenserc.yaml                    @PalenaAI/maintainers @PalenaAI/security
+/SECURITY.md                        @PalenaAI/maintainers @PalenaAI/security
+
+# Container and deployment surfaces.
+/deploy/                            @PalenaAI/maintainers @PalenaAI/security

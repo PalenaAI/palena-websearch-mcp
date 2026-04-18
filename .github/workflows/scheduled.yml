@@ -1,0 +1,187 @@
+# Copyright (c) 2026 bitkaio LLC. All rights reserved.
+# Licensed under the Apache License, Version 2.0. See LICENSE for details.
+name: Scheduled Scans
+
+on:
+  schedule:
+    # Mondays at 06:00 UTC — catch new CVEs in deps and unchanged code.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: ghcr.io/palenaai/palena-websearch-mcp
+
+jobs:
+
+  codeql-scheduled:
+    name: CodeQL (scheduled)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2.18.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@65216971a11ded447a6b76263d5a144519e5eee1 # codeql-bundle-v2.25.2
+        with:
+          languages: go
+          queries: security-extended,security-and-quality
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@65216971a11ded447a6b76263d5a144519e5eee1 # codeql-bundle-v2.25.2
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@65216971a11ded447a6b76263d5a144519e5eee1 # codeql-bundle-v2.25.2
+        with:
+          category: "/language:go"
+
+  vulncheck-scheduled:
+    name: govulncheck (scheduled)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2.18.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck (JSON)
+        id: vulncheck
+        run: |
+          set +e
+          govulncheck -json ./... > govulncheck.json
+          code=$?
+          echo "exit_code=${code}" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload govulncheck report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: govulncheck-report
+          path: govulncheck.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Open issue on new findings
+        if: steps.vulncheck.outputs.exit_code != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          title="Scheduled govulncheck: findings on $(date -u +%Y-%m-%d)"
+          body=$'Scheduled govulncheck found vulnerabilities.\n\nSee the `govulncheck-report` artifact on the triggering run for details.'
+          existing=$(gh issue list --state open --search "in:title \"Scheduled govulncheck\"" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body (run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})"
+          else
+            gh issue create --title "$title" --body "$body" --label security,automated
+          fi
+
+  trivy-scheduled:
+    name: Trivy (latest image)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      packages: read
+      issues: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2.18.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Trivy
+        env:
+          TRIVY_VERSION: "0.70.0"
+        run: |
+          set -euo pipefail
+          curl -sfLo /tmp/trivy.tgz \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -sfLo /tmp/trivy_checksums.txt \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_checksums.txt"
+          expected=$(grep "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" /tmp/trivy_checksums.txt | awk '{print $1}')
+          actual=$(sha256sum /tmp/trivy.tgz | awk '{print $1}')
+          if [ "$expected" != "$actual" ]; then
+            echo "Trivy checksum mismatch" >&2
+            exit 1
+          fi
+          tar -xzf /tmp/trivy.tgz -C /tmp trivy
+          sudo install -m 0755 /tmp/trivy /usr/local/bin/trivy
+
+      - name: Trivy scan latest image (SARIF)
+        id: scan
+        run: |
+          set +e
+          trivy image \
+            --exit-code 1 \
+            --severity HIGH,CRITICAL \
+            --format sarif \
+            --output trivy.sarif \
+            --ignore-unfixed \
+            "${IMAGE_NAME}:latest"
+          code=$?
+          echo "exit_code=${code}" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload Trivy SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@65216971a11ded447a6b76263d5a144519e5eee1 # codeql-bundle-v2.25.2
+        with:
+          sarif_file: trivy.sarif
+          category: trivy-scheduled
+
+      - name: Open issue on new findings
+        if: steps.scan.outputs.exit_code != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          title="Scheduled Trivy scan: findings on $(date -u +%Y-%m-%d)"
+          body="Scheduled Trivy scan of \`${IMAGE_NAME}:latest\` found HIGH/CRITICAL vulnerabilities. See the Security tab (category: \`trivy-scheduled\`)."
+          existing=$(gh issue list --state open --search "in:title \"Scheduled Trivy scan\"" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body (run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})"
+          else
+            gh issue create --title "$title" --body "$body" --label security,automated
+          fi

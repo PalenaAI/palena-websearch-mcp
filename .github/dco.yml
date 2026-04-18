@@ -1,0 +1,4 @@
+# probot/dco configuration — enforces Signed-off-by on external contributor
+# commits. Org members (and the repo owner for user-owned repos) are exempt.
+require:
+  members: false
