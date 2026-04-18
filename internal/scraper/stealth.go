@@ -151,7 +151,7 @@ func (e *L2Extractor) extractStealth(ctx context.Context, rawURL, proxyURL strin
 	}
 
 	// Longer settle for stealth to let lazy-loaded JS complete.
-	page.WaitForTimeout(800)
+	time.Sleep(800 * time.Millisecond)
 
 	html, err := page.Content()
 	if err != nil {

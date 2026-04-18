@@ -44,7 +44,7 @@ func fakeTEI(t *testing.T, scoreFn func(input string) float64) *httptest.Server 
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(out)
+		_ = json.NewEncoder(w).Encode(out)
 	})
 	return httptest.NewServer(mux)
 }

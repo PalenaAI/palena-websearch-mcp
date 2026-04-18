@@ -87,7 +87,7 @@ func (r *FlashRankReranker) Rerank(ctx context.Context, query string, docs []Doc
 	if err != nil {
 		return nil, fmt.Errorf("reranker: flashrank: request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))

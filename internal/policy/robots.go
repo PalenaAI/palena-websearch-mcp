@@ -141,7 +141,7 @@ func (rc *RobotsChecker) fetchRobots(ctx context.Context, domain string) *robots
 		)
 		return &robotsEntry{err: err, fetchedAt: time.Now()}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

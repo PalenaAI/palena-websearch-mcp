@@ -284,7 +284,7 @@ func (e *ClickHouseExporter) insert(ctx context.Context, records []*ProvenanceRe
 	if err != nil {
 		return fmt.Errorf("provenance: clickhouse request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("provenance: clickhouse returned %d", resp.StatusCode)

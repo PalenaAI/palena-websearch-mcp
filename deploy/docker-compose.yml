@@ -120,9 +120,18 @@ services:
   # repo or a local path mounted into /data. No Palena code changes are
   # needed — just update PALENA_INJECTION_MODEL for audit-log accuracy.
   #
-  # Pin a specific tag in production; cpu-latest is used here for dev.
+  # HuggingFace only publishes x86_64 builds of TEI to ghcr.io. On Apple
+  # Silicon the image runs under QEMU emulation (functional but slow — fine
+  # for dev, not representative of prod throughput). For native arm64
+  # performance, build from source:
+  #   git clone https://github.com/huggingface/text-embeddings-inference
+  #   docker build text-embeddings-inference -f text-embeddings-inference/Dockerfile-arm64 \
+  #     --platform=linux/arm64 -t tei-cpu-arm64:local
+  # Then override the image here with `tei-cpu-arm64:local` and remove the
+  # platform directive below.
   injection-guard:
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest
+    image: ghcr.io/huggingface/text-embeddings-inference:${TEI_IMAGE_TAG:-cpu-1.9}
+    platform: linux/amd64
     command:
       - --model-id
       - deepset/deberta-v3-base-injection

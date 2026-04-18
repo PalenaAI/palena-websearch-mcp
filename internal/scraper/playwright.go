@@ -191,7 +191,7 @@ func (e *L1Extractor) extractInContext(ctx context.Context, rawURL string) (*L1R
 	}
 
 	// Brief settle for late JS.
-	page.WaitForTimeout(500)
+	time.Sleep(500 * time.Millisecond)
 
 	html, err := page.Content()
 	if err != nil {

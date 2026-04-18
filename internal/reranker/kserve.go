@@ -99,7 +99,7 @@ func (r *KServeReranker) Rerank(ctx context.Context, query string, docs []Docume
 	if err != nil {
 		return nil, fmt.Errorf("reranker: kserve: request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))

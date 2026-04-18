@@ -538,7 +538,7 @@ func (h *ToolHandler) HandleWebSearch(
 	var resultMetas []ResultMeta
 
 	for _, rd := range ranked {
-		idx := rd.Document.Index
+		idx := rd.Index
 		doc := scraped[idx]
 		md := doc.Markdown
 
@@ -555,14 +555,14 @@ func (h *ToolHandler) HandleWebSearch(
 			md,           // final content as delivered
 		)
 
-		fmt.Fprintf(&contentBuilder, "## %d. %s\n", rd.Rank, rd.Document.Title)
-		fmt.Fprintf(&contentBuilder, "**Source:** %s\n", rd.Document.URL)
+		fmt.Fprintf(&contentBuilder, "## %d. %s\n", rd.Rank, rd.Title)
+		fmt.Fprintf(&contentBuilder, "**Source:** %s\n", rd.URL)
 		fmt.Fprintf(&contentBuilder, "**Relevance:** %.2f\n\n", rd.Score)
 		fmt.Fprintf(&contentBuilder, "%s\n\n---\n\n", md)
 
 		resultMetas = append(resultMetas, ResultMeta{
-			URL:               rd.Document.URL,
-			Title:             rd.Document.Title,
+			URL:               rd.URL,
+			Title:             rd.Title,
 			Score:             rd.Score,
 			ScraperLevel:      doc.Level,
 			ContentHash:       finalHash,

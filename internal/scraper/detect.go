@@ -27,7 +27,6 @@ var (
 	scriptTagRe    = regexp.MustCompile(`(?i)<script[\s>]`)
 	noscriptRe     = regexp.MustCompile(`(?i)<noscript[^>]*>(.*?)</noscript>`)
 	emptyRootRe    = regexp.MustCompile(`(?i)<div\s+id=["'](root|app|__next)["']\s*>\s*</div>`)
-	spaMetaRe      = regexp.MustCompile(`(?i)<meta\s+name=["']fragment["']\s+content=["']!["']`)
 	nextDataRe     = regexp.MustCompile(`__NEXT_DATA__`)
 	nuxtDataRe     = regexp.MustCompile(`__NUXT__`)
 	gatsbyRe       = regexp.MustCompile(`___gatsby`)

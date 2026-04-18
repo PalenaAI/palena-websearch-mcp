@@ -87,7 +87,7 @@ func (e *L0Extractor) Extract(ctx context.Context, rawURL string) (*L0Result, er
 	if err != nil {
 		return nil, fmt.Errorf("scraper: fetch %s: %w", rawURL, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("scraper: %s returned status %d", rawURL, resp.StatusCode)

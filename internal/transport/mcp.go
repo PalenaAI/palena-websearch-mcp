@@ -172,7 +172,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if resp.Status != "ok" {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}
-	json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		slog.Error("transport: encode /health response failed", "error", err)
+	}
 }
 
 // pingSidecar makes a lightweight GET request to a sidecar health endpoint.
@@ -190,7 +192,7 @@ func (s *Server) pingSidecar(ctx context.Context, url string) string {
 	if err != nil {
 		return "unavailable"
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return "ok"

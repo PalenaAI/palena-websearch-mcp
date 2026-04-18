@@ -89,7 +89,7 @@ func (c *SearXNGClient) Search(ctx context.Context, req SearchRequest) (*SearchR
 	if err != nil {
 		return nil, fmt.Errorf("search: execute request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("search: SearXNG returned status %d", resp.StatusCode)

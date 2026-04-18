@@ -109,7 +109,7 @@ func (c *PresidioClient) Analyze(ctx context.Context, text, language string) ([]
 	if err != nil {
 		return nil, fmt.Errorf("pii: analyzer unavailable: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -178,7 +178,7 @@ func (c *PresidioClient) Anonymize(ctx context.Context, text string, entities []
 	if err != nil {
 		return nil, fmt.Errorf("pii: anonymizer unavailable: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
