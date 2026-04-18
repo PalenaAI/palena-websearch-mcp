@@ -290,6 +290,7 @@ jobs:
           version = os.environ["VERSION"]
           image = os.environ["IMAGE"]
           digest = os.environ["DIGEST"]
+          repository = os.environ.get("GITHUB_REPOSITORY", "PalenaAI/palena-websearch-mcp")
 
           with open("CHANGELOG.md", "r", encoding="utf-8") as fh:
               text = fh.read()
@@ -330,7 +331,7 @@ jobs:
               "Verify the image signature:\n\n"
               "```sh\n"
               "cosign verify \\\n"
-              f"  --certificate-identity-regexp 'https://github.com/{os.environ.get(\"GITHUB_REPOSITORY\", \"PalenaAI/palena-websearch-mcp\")}/' \\\n"
+              f"  --certificate-identity-regexp 'https://github.com/{repository}/' \\\n"
               "  --certificate-oidc-issuer https://token.actions.githubusercontent.com \\\n"
               f"  {image}@{digest}\n"
               "```\n"
