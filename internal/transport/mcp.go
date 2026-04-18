@@ -25,7 +25,7 @@ import (
 	"github.com/bitkaio/palena-websearch-mcp/internal/search"
 )
 
-const version = "0.1.0"
+const version = "0.9.0"
 
 // Server wraps the MCP server and the HTTP server that exposes it.
 type Server struct {

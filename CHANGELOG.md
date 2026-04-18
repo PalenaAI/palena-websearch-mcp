@@ -6,8 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-04-18
+
+Initial public release of the Palena MCP Server.
+
 ### Added
 
+- **MCP server** with SSE (`/sse`) and Streamable HTTP (`/mcp`) transports, plus standalone REST API (`/api/v1/search`)
+- **`web_search` MCP tool** with input parameters: query, category (general/news/code/science), language, timeRange, maxResults
+- **SearXNG search integration** with category-based engine routing, query expansion, and URL deduplication
+- **Tiered content extraction** via Playwright
+  - L0: plain HTTP GET with go-readability for server-rendered pages
+  - L1: headless Chromium via Playwright for JavaScript-rendered pages
+  - L2: stealth mode with navigator.webdriver override, viewport/UA randomization, and proxy rotation for bot-protected pages
+  - Automatic escalation: L0 -> L1 (if content detection flags JS rendering) -> L2 (if bot-blocked)
+  - Graceful degradation when the Playwright sidecar is unavailable
+- **PII detection and redaction** via Microsoft Presidio
+  - Three modes: audit (detect and log), redact (detect and anonymize), block (reject high-density PII documents)
+  - Configurable entity types, anonymization strategies, and density thresholds
+  - Audit records that never contain actual PII values
+  - Graceful degradation when Presidio is unavailable
 - **Prompt-injection defense** via a Hugging Face Text Embeddings Inference (TEI) sidecar serving `deepset/deberta-v3-base-injection`
   - Three modes: `audit` (detect and log), `annotate` (wrap suspicious chunks in `<untrusted-content>` markers), `block` (drop documents containing any over-threshold chunk)
   - Per-paragraph chunked scoring catches short malicious paragraphs hidden inside otherwise legitimate pages
@@ -15,51 +33,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Configurable injection-label name (`injection.injectionLabel`) so fine-tuned models with different label conventions work without code changes
   - Audit records that never contain chunk text — only counts, max/mean scores, and over-threshold counts
   - Graceful degradation when the TEI sidecar is unreachable
-  - New `injection-guard` service in `deploy/docker-compose.yml`, disabled-by-default `injection:` config block in `palena.yaml`, and `PALENA_INJECTION_*` env overrides
   - Documentation: [`docs/prompt-injection.md`](docs/prompt-injection.md)
-
-## [0.1.0] - 2026-04-01
-
-Initial implementation of the Palena MCP Server.
-
-### Added
-
-- **MCP server** with SSE (`/sse`) and Streamable HTTP (`/mcp`) transports, plus standalone REST API (`/api/v1/search`)
-- **`web_search` MCP tool** with input parameters: query, category (general/news/code/science), language, timeRange, maxResults
-- **SearXNG search integration** with category-based engine routing, query expansion, and URL deduplication
-- **Tiered content extraction**
-  - L0: plain HTTP GET with go-readability for server-rendered pages
-  - L1: headless Chromium via Chrome DevTools Protocol for JavaScript-rendered pages
-  - L2: stealth mode with navigator.webdriver override, viewport/UA randomization, and proxy rotation for bot-protected pages
-  - Automatic escalation: L0 -> L1 (if content detection flags JS rendering) -> L2 (if bot-blocked)
-  - Graceful degradation when Chromium sidecar is unavailable
-- **PII detection and redaction** via Microsoft Presidio
-  - Three modes: audit (detect and log), redact (detect and anonymize), block (reject high-density PII documents)
-  - Configurable entity types, anonymization strategies, and density thresholds
-  - Audit records that never contain actual PII values
-  - Graceful degradation when Presidio is unavailable
 - **Pluggable reranker subsystem**
   - KServe provider for GPU cross-encoder models (mxbai-rerank)
   - FlashRank provider for CPU ONNX models with Flask sidecar
   - RankLLM provider for LLM-as-reranker via any inference endpoint
   - Noop provider to skip reranking and preserve search engine order
+- **Domain policy** with allow/blocklists and robots.txt enforcement, evaluated before scraping
 - **Content provenance**
   - Three-stage SHA-256 hash chain: raw HTML, extracted markdown, final content
   - Structured provenance records emitted via slog
   - Optional batched ClickHouse export for audit trail storage
 - **OpenTelemetry instrumentation**
-  - Distributed tracing with spans for each pipeline stage (search, scrape, PII, rerank, pipeline)
+  - Distributed tracing with spans for each pipeline stage (search, scrape, PII, injection, rerank, pipeline)
   - Prometheus-compatible metrics: counters (requests, errors, PII entities) and histograms (duration, content length)
   - Configurable exporters: OTLP gRPC, stdout, Prometheus, or disabled
 - **Proxy pool** with round-robin rotation and cooldown-on-failure for L2 extraction
 - **YAML configuration** with environment variable overrides (`PALENA_*` pattern) and built-in defaults
 - **Health endpoint** (`/health`) with sidecar reachability checks
 - **Docker deployment**
-  - Multi-stage Dockerfile producing a distroless image under 50 MB
-  - Full-stack Docker Compose with all sidecars (SearXNG, Presidio, Chromium, FlashRank)
+  - Multi-stage Dockerfile producing a runtime image that bundles the Playwright driver subprocess
+  - Full-stack Docker Compose with all sidecars (SearXNG, Presidio, Playwright, injection-guard, FlashRank)
   - Minimal Docker Compose with Palena + SearXNG only
   - FlashRank sidecar Dockerfile and Flask server
   - Pre-configured SearXNG settings with JSON format enabled
-- **Helm chart** for Kubernetes/OpenShift with per-sidecar toggles (presidio, chromium, flashrank), ConfigMap-based configuration, and health probes
+- **Helm chart** for Kubernetes/OpenShift with per-sidecar toggles (presidio, playwright, injection-guard, flashrank), ConfigMap-based configuration, and health probes
 - **Annotated example configuration** (`config/palena.example.yaml`) documenting every option
-- **Subsystem documentation** covering architecture, search, scraper, PII, reranker, MCP transport, configuration, and provenance
+- **Subsystem documentation** covering architecture, search, scraper, PII, prompt-injection, reranker, MCP transport, configuration, and provenance
+
+### Known issues
+
+- **Injection-guard throughput on long pages is limited by an upstream TEI bug.** The released TEI v1.9 Docker image has a DeBERTa-v2/v3 batching defect — multi-input forward passes fail with `broadcast_mul` shape mismatches. Palena works around it by serializing classifier calls (one HTTP request per chunk), which keeps the classifier correct but means a 70-chunk document spends roughly a minute inside the injection stage. Upstream fix: [huggingface/text-embeddings-inference#846](https://github.com/huggingface/text-embeddings-inference/pull/846), expected in TEI v1.10.0. When the image is bumped, raise `predictConcurrency` in [`internal/injection/tei.go`](internal/injection/tei.go) to restore parallelism.

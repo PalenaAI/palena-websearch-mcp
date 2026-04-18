@@ -28,16 +28,23 @@ func fakeTEI(t *testing.T, scoreFn func(input string) float64) *httptest.Server 
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		// Mirror the real TEI wire format: inputs is [[string], ...].
+		// A flat []string would incorrectly accept the old (broken)
+		// client and let a regression sneak past.
 		var req struct {
-			Inputs []string `json:"inputs"`
+			Inputs [][]string `json:"inputs"`
 		}
 		if err := json.Unmarshal(body, &req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		out := make([][]map[string]any, len(req.Inputs))
-		for i, in := range req.Inputs {
-			s := scoreFn(in)
+		for i, pair := range req.Inputs {
+			if len(pair) != 1 {
+				http.Error(w, "fake TEI only handles single-segment inputs", http.StatusBadRequest)
+				return
+			}
+			s := scoreFn(pair[0])
 			out[i] = []map[string]any{
 				{"label": "INJECTION", "score": s},
 				{"label": "LEGIT", "score": 1 - s},

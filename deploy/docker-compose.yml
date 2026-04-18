@@ -137,6 +137,13 @@ services:
       - deepset/deberta-v3-base-injection
       - --port
       - "8080"
+    # Known limitation: TEI v1.9 has a DeBERTa-v2/v3 batching bug
+    # (broadcast_mul shape mismatch) that fires whenever more than one
+    # input shares a forward pass. Palena's client mitigates this by
+    # serializing classifier calls (predictConcurrency=1 in
+    # internal/injection/tei.go). Upstream fix tracked in
+    # huggingface/text-embeddings-inference#846, expected in v1.10.0 —
+    # bump this image tag when released, then raise client concurrency.
     ports:
       - "8082:8080"
     volumes:
@@ -144,7 +151,7 @@ services:
     environment:
       HF_HUB_ENABLE_HF_TRANSFER: "1"
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
       interval: 30s
       timeout: 5s
       retries: 5

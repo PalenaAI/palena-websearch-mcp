@@ -5,8 +5,8 @@ apiVersion: v2
 name: palena
 description: Palena MCP Server — enterprise web search for regulated industries
 type: application
-version: 0.1.0
-appVersion: "0.1.0"
+version: 0.9.0
+appVersion: "0.9.0"
 keywords:
   - mcp
   - web-search
