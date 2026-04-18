@@ -1,4 +1,4 @@
-# Palena
+# Palena WebSearch MCP
 
 **Enterprise-grade web search for AI — with compliance boundaries built in.**
 
@@ -205,7 +205,7 @@ cp config/palena.example.yaml config/palena.yaml
 | `provenance` | Hash chain, ClickHouse export | `PALENA_PROVENANCE_ENABLED` |
 | `otel` | Trace + metric exporters | `PALENA_OTEL_ENABLED` |
 
-Full annotated reference: [`config/palena.example.yaml`](config/palena.example.yaml) · deep-dive: [`docs/CONFIG.md`](docs/CONFIG.md).
+Full annotated reference: [`config/palena.example.yaml`](config/palena.example.yaml) · deep-dive: [Configuration guide](docs/configuration.md).
 
 ---
 
@@ -280,23 +280,21 @@ palena-websearch-mcp/
 │   └── otel/             # Tracing + metrics setup
 ├── config/               # Default + annotated example YAML
 ├── deploy/               # Dockerfile, Compose (full + minimal), Helm chart
-└── docs/                 # Per-subsystem deep dives
+└── docs/                 # User documentation
 ```
 
 ---
 
 ## Documentation
 
-| Document | Topic |
+Full user documentation lives in [`docs/`](docs/README.md).
+
+| Topic | Where to read |
 |---|---|
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System design, request lifecycle, concurrency model |
-| [`docs/SEARCH.md`](docs/SEARCH.md) | SearXNG integration, query expansion, engine routing |
-| [`docs/SCRAPER.md`](docs/SCRAPER.md) | Tiered extraction, JS detection, stealth, proxy rotation |
-| [`docs/PII.md`](docs/PII.md) | Presidio setup, audit / redact / block modes |
-| [`docs/RERANKER.md`](docs/RERANKER.md) | Reranker interface, model options, API contracts |
-| [`docs/MCP.md`](docs/MCP.md) | MCP transport, tool schema, response format |
-| [`docs/CONFIG.md`](docs/CONFIG.md) | Full configuration reference |
-| [`docs/PROVENANCE.md`](docs/PROVENANCE.md) | Hash chain, audit records, ClickHouse schema |
+| **Start here** | [Getting Started](docs/getting-started.md) · [Concepts](docs/concepts.md) · [FAQ](docs/faq.md) |
+| **Using the server** | [Tool Reference](docs/tool-reference.md) · [Integrations](docs/integrations.md) · [Configuration](docs/configuration.md) |
+| **Pipeline stages** | [Scraping](docs/scraping.md) · [PII & Compliance](docs/pii-and-compliance.md) · [Reranking](docs/reranking.md) · [Provenance](docs/provenance.md) |
+| **Running in production** | [Deployment](docs/deployment.md) · [Observability](docs/observability.md) |
 
 ---
 
