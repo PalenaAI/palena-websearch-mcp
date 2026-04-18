@@ -30,7 +30,7 @@ Two Compose files ship with Palena:
 
 ### Full stack
 
-[`deploy/docker-compose.yml`](../deploy/docker-compose.yml) — Palena plus every sidecar.
+[`deploy/docker-compose.yml`](https://github.com/PalenaAI/palena-websearch-mcp/blob/main/deploy/docker-compose.yml) — Palena plus every sidecar.
 
 ```bash
 docker compose -f deploy/docker-compose.yml up --build
@@ -51,7 +51,7 @@ All sidecars are on a shared internal network (`palena_default`). Palena uses se
 
 ### Minimal stack
 
-[`deploy/docker-compose.minimal.yml`](../deploy/docker-compose.minimal.yml) — Palena + SearXNG only.
+[`deploy/docker-compose.minimal.yml`](https://github.com/PalenaAI/palena-websearch-mcp/blob/main/deploy/docker-compose.minimal.yml) — Palena + SearXNG only.
 
 ```bash
 docker compose -f deploy/docker-compose.minimal.yml up --build
@@ -74,7 +74,7 @@ Remember to update `palena.yaml` (or the environment variable equivalents) to re
 
 ## Helm chart
 
-The chart lives at [`deploy/helm/palena/`](../deploy/helm/palena/). It bundles Palena and every sidecar; each optional sidecar is toggleable via `values.yaml`.
+The chart lives at [`deploy/helm/palena/`](https://github.com/PalenaAI/palena-websearch-mcp/tree/main/deploy/helm/palena). It bundles Palena and every sidecar; each optional sidecar is toggleable via `values.yaml`.
 
 ### Install
 
@@ -127,7 +127,7 @@ See [Reranking — KServe](reranking.md#kserve--gpu-cross-encoder) for model and
 | `flashrank.enabled` | `true` | Include FlashRank sidecar. |
 | `serviceMonitor.enabled` | `false` | Create a Prometheus `ServiceMonitor` for `/metrics`. |
 
-See [`deploy/helm/palena/values.yaml`](../deploy/helm/palena/values.yaml) for the complete annotated set.
+See [`deploy/helm/palena/values.yaml`](https://github.com/PalenaAI/palena-websearch-mcp/blob/main/deploy/helm/palena/values.yaml) for the complete annotated set.
 
 ### OpenShift
 

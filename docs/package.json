@@ -1,0 +1,16 @@
+{
+  "name": "palena-docs",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "VitePress documentation site for Palena — enterprise-grade web search MCP server.",
+  "scripts": {
+    "dev": "vitepress dev .",
+    "build": "vitepress build .",
+    "preview": "vitepress preview ."
+  },
+  "devDependencies": {
+    "vitepress": "^1.6.4",
+    "vue": "^3.5.13"
+  }
+}

@@ -46,6 +46,11 @@ fabric.properties
 go.work
 go.work.sum
 .env
+
+# VitePress / docs site
+node_modules/
+docs/.vitepress/cache/
+docs/.vitepress/dist/
 .DS_Store
 .AppleDouble
 .LSOverride

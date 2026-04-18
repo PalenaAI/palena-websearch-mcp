@@ -45,7 +45,7 @@ Palena itself is Apache 2.0. All bundled images are Apache 2.0 or compatible:
 
 SearXNG is AGPL-3.0 but runs as an unmodified upstream container — your integration with it via HTTP does not trigger AGPL propagation to your own code.
 
-See the [LICENSE](../LICENSE) file for Palena's full terms.
+See the [LICENSE](https://github.com/PalenaAI/palena-websearch-mcp/blob/main/LICENSE) file for Palena's full terms.
 
 ---
 
@@ -167,7 +167,7 @@ Presidio is called via its public REST API. Any system exposing a compatible `/a
 
 ## How do I contribute?
 
-See [CONTRIBUTING.md](../CONTRIBUTING.md) in the repository root.
+See [CONTRIBUTING.md](https://github.com/PalenaAI/palena-websearch-mcp/blob/main/CONTRIBUTING.md) in the repository root.
 
 ---
 
