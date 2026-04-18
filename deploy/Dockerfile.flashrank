@@ -5,7 +5,8 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir flask flashrank
+COPY flashrank-requirements.txt .
+RUN pip install --no-cache-dir --require-hashes=false -r flashrank-requirements.txt
 
 COPY flashrank_server.py .
 

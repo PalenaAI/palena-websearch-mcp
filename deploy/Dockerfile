@@ -13,8 +13,13 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 # Copy source and build.
+# GOOS/GOARCH intentionally unset: buildx + QEMU runs this stage on the
+# TARGETPLATFORM for each entry in `platforms:` (amd64, arm64), so Go picks
+# up the correct target arch natively. The playwright-go driver install
+# below also relies on this — it downloads /driver/node matching the arch
+# of the builder process.
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+RUN CGO_ENABLED=0 GOOS=linux \
     go build -ldflags="-s -w" -trimpath -o /palena ./cmd/palena
 
 # Download the Playwright driver into /driver via playwright-go's own CLI.
@@ -22,7 +27,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 # runtime image does not need Node.js installed.
 ENV PLAYWRIGHT_DRIVER_PATH=/driver
 RUN mkdir -p /driver \
-    && go run github.com/playwright-community/playwright-go/cmd/playwright install --no-browsers \
+    && go run github.com/playwright-community/playwright-go/cmd/playwright@v0.5700.1 install --no-browsers \
     || true
 # The install command returns non-zero when browsers are skipped with no args.
 # Verify the driver binary exists; fail the build if it does not.
@@ -39,6 +44,10 @@ RUN chmod -R a+rX /driver
 FROM debian:bookworm-slim
 
 # ca-certificates so the Go binary can talk HTTPS to SearXNG, reranker, etc.
+# (debian:bookworm-slim pins a single ca-certificates version per release;
+# pinning inline here would have to be updated every time the base image
+# bumps, which Renovate already handles at the FROM level.)
+# hadolint ignore=DL3008
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
