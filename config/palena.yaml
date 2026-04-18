@@ -155,6 +155,49 @@ pii:
   timeout: 5s                              # Presidio request timeout.
 
 # =============================================================================
+# Injection — prompt-injection classifier (HF TEI sidecar)
+# =============================================================================
+# Screens scraped content for indirect prompt-injection attempts before it
+# reaches the reranker / LLM. Default model is
+# deepset/deberta-v3-base-injection served by the text-embeddings-inference
+# image. Swap the model out by changing predictURL/model only — no Palena
+# code change is needed for a fine-tuned successor on the same DeBERTa-v3
+# backbone.
+injection:
+  enabled: false                           # PALENA_INJECTION_ENABLED
+  # Set to true once the injection-guard sidecar is reachable.
+
+  mode: "audit"                            # PALENA_INJECTION_MODE
+    # audit    — score every chunk, log findings, pass content through
+    # annotate — wrap suspicious chunks in <untrusted-content> markers
+  # block    — drop the document if any chunk score > threshold
+
+  predictURL: "http://injection-guard:8080" # PALENA_INJECTION_PREDICT_URL
+  # Base URL of the TEI sidecar. /predict is appended automatically.
+
+  model: "deepset/deberta-v3-base-injection" # PALENA_INJECTION_MODEL
+  # Informational — logged in audit records. Must match what the sidecar
+  # is actually serving.
+
+  injectionLabel: "INJECTION"              # PALENA_INJECTION_LABEL
+  # Label name in the model's output that signals injection. Adjust if
+  # your fine-tuned model uses a different convention (e.g. "unsafe").
+
+  scoreThreshold: 0.85                     # PALENA_INJECTION_SCORE_THRESHOLD
+  # Chunks with injection probability above this value are flagged.
+
+  maxChunkChars: 1200                      # Hard ceiling per scored chunk.
+  # The DeBERTa-v3 model has a 512-token window; keeping chunks under
+  # ~1200 chars stays comfortably inside it after tokenization.
+
+  annotateOpen: "<untrusted-content reason=\"prompt-injection-suspected\">\n"
+  annotateClose: "\n</untrusted-content>"
+  # Wrapper markers inserted around suspicious chunks (mode=annotate).
+  # Choose markers your downstream LLM treats as untrusted content.
+
+  timeout: 5s                              # Per-call sidecar timeout.
+
+# =============================================================================
 # Reranker — pluggable relevance re-scoring
 # =============================================================================
 reranker:

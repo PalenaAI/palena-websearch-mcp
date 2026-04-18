@@ -27,6 +27,8 @@ services:
       PALENA_SCRAPER_PLAYWRIGHT_ENDPOINT: ws://playwright:3000
       PALENA_PII_ANALYZER_URL: http://presidio-analyzer:5002
       PALENA_PII_ANONYMIZER_URL: http://presidio-anonymizer:5001
+      PALENA_INJECTION_ENABLED: "true"
+      PALENA_INJECTION_PREDICT_URL: http://injection-guard:8080
       PALENA_RERANKER_PROVIDER: flashrank
       PALENA_RERANKER_ENDPOINT: http://flashrank:8080
     depends_on:
@@ -38,6 +40,8 @@ services:
         condition: service_started
       playwright:
         condition: service_started
+      injection-guard:
+        condition: service_healthy
       flashrank:
         condition: service_started
     restart: unless-stopped
@@ -106,6 +110,39 @@ services:
     restart: unless-stopped
 
   # ===========================================================================
+  # Injection Guard — DeBERTa-v3 prompt-injection classifier (HF TEI sidecar)
+  # ===========================================================================
+  # Serves deepset/deberta-v3-base-injection via Hugging Face's
+  # text-embeddings-inference image. The image auto-detects the model task
+  # and exposes POST /predict for sequence classification.
+  #
+  # Swap in a fine-tuned successor by changing --model-id to a Hugging Face
+  # repo or a local path mounted into /data. No Palena code changes are
+  # needed — just update PALENA_INJECTION_MODEL for audit-log accuracy.
+  #
+  # Pin a specific tag in production; cpu-latest is used here for dev.
+  injection-guard:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest
+    command:
+      - --model-id
+      - deepset/deberta-v3-base-injection
+      - --port
+      - "8080"
+    ports:
+      - "8082:8080"
+    volumes:
+      - injection-guard-cache:/data
+    environment:
+      HF_HUB_ENABLE_HF_TRANSFER: "1"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
+  # ===========================================================================
   # FlashRank — CPU-based cross-encoder reranker
   # ===========================================================================
   flashrank:
@@ -118,3 +155,6 @@ services:
       FLASHRANK_MODEL: ms-marco-MiniLM-L-12-v2
       PORT: "8080"
     restart: unless-stopped
+
+volumes:
+  injection-guard-cache:

@@ -21,6 +21,7 @@ type Config struct {
 	Scraper    ScraperConfig    `yaml:"scraper"`
 	Policy     PolicyConfig     `yaml:"policy"`
 	PII        PIIConfig        `yaml:"pii"`
+	Injection  InjectionConfig  `yaml:"injection"`
 	Reranker   RerankerConfig   `yaml:"reranker"`
 	Provenance ProvenanceConfig `yaml:"provenance"`
 	OTel       OTelConfig       `yaml:"otel"`
@@ -74,6 +75,27 @@ type AnonymizerEntry struct {
 	MaskingChar string `yaml:"maskingChar"` // mask character (type=mask)
 	CharsToMask int    `yaml:"charsToMask"` // number of chars to mask (type=mask)
 	FromEnd     bool   `yaml:"fromEnd"`     // mask from end (type=mask)
+}
+
+// InjectionConfig holds settings for the prompt-injection scanner subsystem.
+//
+// The default model is deepset/deberta-v3-base-injection served via Hugging
+// Face's text-embeddings-inference (TEI) image. Any HTTP endpoint that
+// implements the TEI /predict contract for sequence classification can be
+// substituted — including a fine-tuned successor model trained on the same
+// microsoft/deberta-v3-base backbone, swapped in by changing PredictURL
+// and Model with no Palena code changes.
+type InjectionConfig struct {
+	Enabled        bool          `yaml:"enabled"`
+	Mode           string        `yaml:"mode"`           // audit | annotate | block
+	PredictURL     string        `yaml:"predictURL"`     // TEI sidecar base URL (no trailing /predict)
+	Model          string        `yaml:"model"`          // model identifier loaded by the sidecar (informational; logged in audit)
+	InjectionLabel string        `yaml:"injectionLabel"` // label name in TEI output that signals injection (e.g. "INJECTION")
+	ScoreThreshold float64       `yaml:"scoreThreshold"` // chunks above this score are treated as injection
+	MaxChunkChars  int           `yaml:"maxChunkChars"`  // upper bound on per-chunk character count
+	AnnotateOpen   string        `yaml:"annotateOpen"`   // wrapper prefix for suspicious chunks (mode=annotate)
+	AnnotateClose  string        `yaml:"annotateClose"`  // wrapper suffix for suspicious chunks (mode=annotate)
+	Timeout        time.Duration `yaml:"timeout"`
 }
 
 // RerankerConfig holds settings for the pluggable reranker subsystem.
@@ -284,6 +306,18 @@ func (c *Config) setDefaults() {
 		},
 		Timeout: 5 * time.Second,
 	}
+	c.Injection = InjectionConfig{
+		Enabled:        false,
+		Mode:           "audit",
+		PredictURL:     "http://injection-guard:8080",
+		Model:          "deepset/deberta-v3-base-injection",
+		InjectionLabel: "INJECTION",
+		ScoreThreshold: 0.85,
+		MaxChunkChars:  1200,
+		AnnotateOpen:   "<untrusted-content reason=\"prompt-injection-suspected\">\n",
+		AnnotateClose:  "\n</untrusted-content>",
+		Timeout:        5 * time.Second,
+	}
 	c.Reranker = RerankerConfig{
 		Provider: "none",
 		Endpoint: "http://reranker:8080",
@@ -405,6 +439,26 @@ func (c *Config) applyEnvOverrides() {
 	if v := os.Getenv("PALENA_PII_ANONYMIZER_URL"); v != "" {
 		c.PII.AnonymizerURL = v
 	}
+	if v := os.Getenv("PALENA_INJECTION_ENABLED"); v != "" {
+		c.Injection.Enabled = strings.EqualFold(v, "true")
+	}
+	if v := os.Getenv("PALENA_INJECTION_MODE"); v != "" {
+		c.Injection.Mode = v
+	}
+	if v := os.Getenv("PALENA_INJECTION_PREDICT_URL"); v != "" {
+		c.Injection.PredictURL = v
+	}
+	if v := os.Getenv("PALENA_INJECTION_MODEL"); v != "" {
+		c.Injection.Model = v
+	}
+	if v := os.Getenv("PALENA_INJECTION_LABEL"); v != "" {
+		c.Injection.InjectionLabel = v
+	}
+	if v := os.Getenv("PALENA_INJECTION_SCORE_THRESHOLD"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			c.Injection.ScoreThreshold = f
+		}
+	}
 	if v := os.Getenv("PALENA_RERANKER_PROVIDER"); v != "" {
 		c.Reranker.Provider = v
 	}
@@ -483,6 +537,32 @@ func (c *Config) validate() error {
 		}
 		if c.PII.Timeout <= 0 {
 			return fmt.Errorf("pii.timeout must be positive")
+		}
+	}
+
+	// Injection validation.
+	if c.Injection.Enabled {
+		validInjectionModes := map[string]bool{"audit": true, "annotate": true, "block": true}
+		if !validInjectionModes[c.Injection.Mode] {
+			return fmt.Errorf("injection.mode must be one of: audit, annotate, block; got %q", c.Injection.Mode)
+		}
+		if c.Injection.PredictURL == "" {
+			return fmt.Errorf("injection.predictURL is required when injection.enabled is true")
+		}
+		if _, err := url.ParseRequestURI(c.Injection.PredictURL); err != nil {
+			return fmt.Errorf("injection.predictURL is not a valid URL: %w", err)
+		}
+		if c.Injection.InjectionLabel == "" {
+			return fmt.Errorf("injection.injectionLabel is required when injection.enabled is true")
+		}
+		if c.Injection.ScoreThreshold < 0 || c.Injection.ScoreThreshold > 1 {
+			return fmt.Errorf("injection.scoreThreshold must be between 0.0 and 1.0, got %f", c.Injection.ScoreThreshold)
+		}
+		if c.Injection.MaxChunkChars < 1 {
+			return fmt.Errorf("injection.maxChunkChars must be >= 1, got %d", c.Injection.MaxChunkChars)
+		}
+		if c.Injection.Timeout <= 0 {
+			return fmt.Errorf("injection.timeout must be positive")
 		}
 	}
 

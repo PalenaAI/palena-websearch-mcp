@@ -34,15 +34,19 @@ type Meters struct {
 	ScrapeErrors     otelmetric.Int64Counter
 	PIIEntities      otelmetric.Int64Counter
 	PIIBlocked       otelmetric.Int64Counter
+	InjectionChunks  otelmetric.Int64Counter
+	InjectionFlagged otelmetric.Int64Counter
+	InjectionBlocked otelmetric.Int64Counter
 	RerankRequests   otelmetric.Int64Counter
 	PipelineRequests otelmetric.Int64Counter
 
 	// Histograms (durations in milliseconds)
-	SearchDuration   otelmetric.Float64Histogram
-	ScrapeDuration   otelmetric.Float64Histogram
-	PIIDuration      otelmetric.Float64Histogram
-	RerankDuration   otelmetric.Float64Histogram
-	PipelineDuration otelmetric.Float64Histogram
+	SearchDuration    otelmetric.Float64Histogram
+	ScrapeDuration    otelmetric.Float64Histogram
+	PIIDuration       otelmetric.Float64Histogram
+	InjectionDuration otelmetric.Float64Histogram
+	RerankDuration    otelmetric.Float64Histogram
+	PipelineDuration  otelmetric.Float64Histogram
 
 	// Content length histogram
 	ContentLength otelmetric.Int64Histogram
@@ -162,6 +166,24 @@ func registerMeters() (*Meters, error) {
 		return nil, fmt.Errorf("otel: create pii.blocked counter: %w", err)
 	}
 
+	m.InjectionChunks, err = meter.Int64Counter("palena.injection.chunks",
+		otelmetric.WithDescription("Total chunks scored by the prompt-injection classifier"))
+	if err != nil {
+		return nil, fmt.Errorf("otel: create injection.chunks counter: %w", err)
+	}
+
+	m.InjectionFlagged, err = meter.Int64Counter("palena.injection.flagged",
+		otelmetric.WithDescription("Total chunks scored above the injection threshold"))
+	if err != nil {
+		return nil, fmt.Errorf("otel: create injection.flagged counter: %w", err)
+	}
+
+	m.InjectionBlocked, err = meter.Int64Counter("palena.injection.blocked",
+		otelmetric.WithDescription("Total documents blocked by injection policy"))
+	if err != nil {
+		return nil, fmt.Errorf("otel: create injection.blocked counter: %w", err)
+	}
+
 	m.RerankRequests, err = meter.Int64Counter("palena.rerank.requests",
 		otelmetric.WithDescription("Total rerank requests"))
 	if err != nil {
@@ -193,6 +215,12 @@ func registerMeters() (*Meters, error) {
 		otelmetric.WithDescription("Per-document PII processing duration"), msUnit)
 	if err != nil {
 		return nil, fmt.Errorf("otel: create pii.duration histogram: %w", err)
+	}
+
+	m.InjectionDuration, err = meter.Float64Histogram("palena.injection.duration",
+		otelmetric.WithDescription("Per-document prompt-injection scan duration"), msUnit)
+	if err != nil {
+		return nil, fmt.Errorf("otel: create injection.duration histogram: %w", err)
 	}
 
 	m.RerankDuration, err = meter.Float64Histogram("palena.rerank.duration",

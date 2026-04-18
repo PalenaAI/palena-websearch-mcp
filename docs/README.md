@@ -32,6 +32,7 @@ This site is the reference documentation. If you are new, start with [Getting St
 |---|---|
 | [Scraping](scraping.md) | Tiered L0 → L1 → L2 extraction, content detection, stealth, and proxy rotation. |
 | [PII & Compliance](pii-and-compliance.md) | PII modes (audit / redact / block), entity types, audit records, domain policy, robots.txt, rate limits. |
+| [Prompt-Injection Defense](prompt-injection.md) | DeBERTa-v3 classifier sidecar, audit / annotate / block modes, bring-your-own-model. |
 | [Reranking](reranking.md) | Picking between KServe, FlashRank, RankLLM, and no reranker. |
 | [Provenance](provenance.md) | The three-stage SHA-256 hash chain and audit record schema. |
 

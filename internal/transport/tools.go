@@ -17,6 +17,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/bitkaio/palena-websearch-mcp/internal/config"
+	"github.com/bitkaio/palena-websearch-mcp/internal/injection"
 	palenaOTel "github.com/bitkaio/palena-websearch-mcp/internal/otel"
 	"github.com/bitkaio/palena-websearch-mcp/internal/output"
 	"github.com/bitkaio/palena-websearch-mcp/internal/pii"
@@ -43,23 +44,28 @@ type WebSearchInput struct {
 
 // WebSearchOutput is the structured output returned alongside the text content.
 type WebSearchOutput struct {
-	Query         string       `json:"query"`
-	ResultCount   int          `json:"result_count"`
-	SearchEngines []string     `json:"search_engines"`
-	PIIMode       string       `json:"pii_mode"`
-	PIIChecked    bool         `json:"pii_checked"`
-	RerankerUsed  string       `json:"reranker_used"`
-	TotalDuration int64        `json:"total_duration_ms"`
-	Results       []ResultMeta `json:"results"`
+	Query             string       `json:"query"`
+	ResultCount       int          `json:"result_count"`
+	SearchEngines     []string     `json:"search_engines"`
+	PIIMode           string       `json:"pii_mode"`
+	PIIChecked        bool         `json:"pii_checked"`
+	InjectionMode     string       `json:"injection_mode"`
+	InjectionChecked  bool         `json:"injection_checked"`
+	InjectionBlocked  int          `json:"injection_blocked"`
+	RerankerUsed      string       `json:"reranker_used"`
+	TotalDuration     int64        `json:"total_duration_ms"`
+	Results           []ResultMeta `json:"results"`
 }
 
 // ResultMeta holds per-result metadata for the tool response.
 type ResultMeta struct {
-	URL          string  `json:"url"`
-	Title        string  `json:"title"`
-	Score        float64 `json:"score"`
-	ScraperLevel int     `json:"scraper_level"`
-	ContentHash  string  `json:"content_hash"`
+	URL              string  `json:"url"`
+	Title            string  `json:"title"`
+	Score            float64 `json:"score"`
+	ScraperLevel     int     `json:"scraper_level"`
+	ContentHash      string  `json:"content_hash"`
+	InjectionAction  string  `json:"injection_action,omitempty"`  // pass | annotated | skipped
+	InjectionMaxScore float64 `json:"injection_max_score,omitempty"`
 }
 
 // ToolHandler holds the dependencies needed to execute the web_search tool.
@@ -70,6 +76,7 @@ type ToolHandler struct {
 	robotsChecker *policy.RobotsChecker
 	rateLimiter   *policy.RateLimiter
 	pii           *pii.Processor
+	injection     *injection.Processor
 	reranker      reranker.Reranker
 	cfg           *config.Config
 	logger        *slog.Logger
@@ -85,6 +92,7 @@ func NewToolHandler(
 	robotsChecker *policy.RobotsChecker,
 	rateLimiter *policy.RateLimiter,
 	piiProc *pii.Processor,
+	injProc *injection.Processor,
 	rr reranker.Reranker,
 	cfg *config.Config,
 	meters *palenaOTel.Meters,
@@ -98,6 +106,7 @@ func NewToolHandler(
 		robotsChecker: robotsChecker,
 		rateLimiter:   rateLimiter,
 		pii:           piiProc,
+		injection:     injProc,
 		reranker:      rr,
 		cfg:           cfg,
 		logger:        logger,
@@ -116,11 +125,13 @@ func WebSearchTool() *mcp.Tool {
 
 // scrapedDoc holds a single scraped+converted document flowing through the pipeline.
 type scrapedDoc struct {
-	URL      string
-	Title    string
-	Markdown string
-	RawHTML  string // original HTML for provenance hashing
-	Level    int
+	URL              string
+	Title            string
+	Markdown         string
+	RawHTML          string // original HTML for provenance hashing
+	Level            int
+	InjectionAction  string  // pass | annotated | skipped
+	InjectionMaxScore float64
 }
 
 // HandleWebSearch is the tool handler called by the MCP server when a client
@@ -398,6 +409,76 @@ func (h *ToolHandler) HandleWebSearch(
 		)
 	}
 
+	// --- Stage 3.7: Prompt-injection scan ---
+	// Optional. If injection.enabled=false the processor's Process() is a
+	// no-op pass-through; if the sidecar is unreachable it logs a warning
+	// and returns Checked=false without failing the document. The pipeline
+	// never short-circuits on injection-stage failure unless mode=block
+	// flagged a chunk above the configured threshold.
+	injMode := h.cfg.Injection.Mode
+	injChecked := false
+	var injBlockedURLs []string
+
+	if h.injection != nil {
+		injStart := time.Now()
+		injCtx, injSpan := palenaOTel.StartSpan(ctx, "palena.injection")
+		injSpan.SetAttributes(
+			attribute.String("injection.mode", injMode),
+			attribute.Bool("injection.enabled", h.cfg.Injection.Enabled),
+		)
+
+		var filtered []scrapedDoc
+		for _, s := range scraped {
+			result := h.injection.Process(injCtx, &injection.Document{
+				URL:     s.URL,
+				Content: s.Markdown,
+			}, requestID)
+
+			injChecked = injChecked || result.Checked
+
+			if result.Checked && h.meters != nil {
+				h.meters.InjectionChunks.Add(injCtx, int64(result.Audit.ChunkCount))
+				h.meters.InjectionFlagged.Add(injCtx, int64(result.Audit.OverThreshold))
+			}
+
+			if result.Blocked {
+				injBlockedURLs = append(injBlockedURLs, s.URL)
+				if h.meters != nil {
+					h.meters.InjectionBlocked.Add(injCtx, 1)
+				}
+				h.logger.InfoContext(ctx, "document blocked by injection policy",
+					"url", s.URL,
+					"max_score", result.MaxScore,
+				)
+				continue
+			}
+
+			s.Markdown = result.Content
+			s.InjectionAction = result.Action
+			s.InjectionMaxScore = result.MaxScore
+			filtered = append(filtered, s)
+		}
+		scraped = filtered
+
+		injDuration := float64(time.Since(injStart).Milliseconds())
+		if h.meters != nil {
+			h.meters.InjectionDuration.Record(injCtx, injDuration)
+		}
+		injSpan.SetAttributes(
+			attribute.Int("injection.input_count", len(scraped)+len(injBlockedURLs)),
+			attribute.Int("injection.blocked_count", len(injBlockedURLs)),
+			attribute.Float64("injection.duration_ms", injDuration),
+		)
+		palenaOTel.SetSpanOK(injSpan)
+		injSpan.End()
+	}
+
+	if len(scraped) == 0 {
+		return nil, WebSearchOutput{}, fmt.Errorf(
+			"all documents were blocked by injection policy for query %q", input.Query,
+		)
+	}
+
 	// --- Stage 4: Rerank ---
 	rerankStart := time.Now()
 	rerankCtx, rerankSpan := palenaOTel.StartSpan(ctx, "palena.rerank")
@@ -480,11 +561,13 @@ func (h *ToolHandler) HandleWebSearch(
 		fmt.Fprintf(&contentBuilder, "%s\n\n---\n\n", md)
 
 		resultMetas = append(resultMetas, ResultMeta{
-			URL:          rd.Document.URL,
-			Title:        rd.Document.Title,
-			Score:        rd.Score,
-			ScraperLevel: doc.Level,
-			ContentHash:  finalHash,
+			URL:               rd.Document.URL,
+			Title:             rd.Document.Title,
+			Score:             rd.Score,
+			ScraperLevel:      doc.Level,
+			ContentHash:       finalHash,
+			InjectionAction:   doc.InjectionAction,
+			InjectionMaxScore: doc.InjectionMaxScore,
 		})
 
 		// Build and emit provenance record.
@@ -531,6 +614,9 @@ func (h *ToolHandler) HandleWebSearch(
 	if len(blockedURLs) > 0 {
 		fmt.Fprintf(&contentBuilder, "**Note:** %d document(s) were blocked by PII policy and excluded from results.\n\n", len(blockedURLs))
 	}
+	if len(injBlockedURLs) > 0 {
+		fmt.Fprintf(&contentBuilder, "**Note:** %d document(s) were blocked by prompt-injection policy and excluded from results.\n\n", len(injBlockedURLs))
+	}
 
 	// Append sources footer.
 	fmt.Fprintf(&contentBuilder, "**Sources:**\n")
@@ -539,9 +625,14 @@ func (h *ToolHandler) HandleWebSearch(
 	}
 
 	piiStatus := fmt.Sprintf("%s (checked=%t)", piiMode, piiChecked)
+	injStatus := "disabled"
+	if h.cfg.Injection.Enabled {
+		injStatus = fmt.Sprintf("%s (checked=%t, blocked=%d)", injMode, injChecked, len(injBlockedURLs))
+	}
 	fmt.Fprintf(&contentBuilder, "\n**Metadata:**\n")
 	fmt.Fprintf(&contentBuilder, "- Results returned: %d\n", len(resultMetas))
 	fmt.Fprintf(&contentBuilder, "- PII: %s\n", piiStatus)
+	fmt.Fprintf(&contentBuilder, "- Injection: %s\n", injStatus)
 	fmt.Fprintf(&contentBuilder, "- Reranker: %s\n", rerankerName)
 	fmt.Fprintf(&contentBuilder, "- Search engines: %s\n", strings.Join(engines, ", "))
 
@@ -559,14 +650,17 @@ func (h *ToolHandler) HandleWebSearch(
 	palenaOTel.SetSpanOK(pipelineSpan)
 
 	meta := WebSearchOutput{
-		Query:         input.Query,
-		ResultCount:   len(resultMetas),
-		SearchEngines: engines,
-		PIIMode:       piiMode,
-		PIIChecked:    piiChecked,
-		RerankerUsed:  rerankerName,
-		TotalDuration: elapsed.Milliseconds(),
-		Results:       resultMetas,
+		Query:            input.Query,
+		ResultCount:      len(resultMetas),
+		SearchEngines:    engines,
+		PIIMode:          piiMode,
+		PIIChecked:       piiChecked,
+		InjectionMode:    injMode,
+		InjectionChecked: injChecked,
+		InjectionBlocked: len(injBlockedURLs),
+		RerankerUsed:     rerankerName,
+		TotalDuration:    elapsed.Milliseconds(),
+		Results:          resultMetas,
 	}
 
 	h.logger.InfoContext(ctx, "web_search tool completed",

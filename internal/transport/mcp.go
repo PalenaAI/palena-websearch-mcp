@@ -15,6 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/bitkaio/palena-websearch-mcp/internal/config"
+	"github.com/bitkaio/palena-websearch-mcp/internal/injection"
 	palenaOTel "github.com/bitkaio/palena-websearch-mcp/internal/otel"
 	"github.com/bitkaio/palena-websearch-mcp/internal/output"
 	"github.com/bitkaio/palena-websearch-mcp/internal/pii"
@@ -44,6 +45,7 @@ func NewServer(
 	robotsChecker *policy.RobotsChecker,
 	rateLimiter *policy.RateLimiter,
 	piiProc *pii.Processor,
+	injProc *injection.Processor,
 	rr reranker.Reranker,
 	meters *palenaOTel.Meters,
 	provExporter *output.ClickHouseExporter,
@@ -59,7 +61,7 @@ func NewServer(
 	)
 
 	// Register the web_search tool.
-	toolHandler := NewToolHandler(searchClient, sc, domainFilter, robotsChecker, rateLimiter, piiProc, rr, cfg, meters, provExporter, logger)
+	toolHandler := NewToolHandler(searchClient, sc, domainFilter, robotsChecker, rateLimiter, piiProc, injProc, rr, cfg, meters, provExporter, logger)
 	mcp.AddTool(mcpServer, WebSearchTool(), toolHandler.HandleWebSearch)
 
 	s := &Server{
@@ -158,6 +160,12 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.PII.Enabled {
 		resp.Sidecars["presidio-analyzer"] = s.pingSidecar(r.Context(), s.cfg.PII.AnalyzerURL+"/health")
 		resp.Sidecars["presidio-anonymizer"] = s.pingSidecar(r.Context(), s.cfg.PII.AnonymizerURL+"/health")
+	}
+
+	// Injection-guard sidecar is also a soft dependency — degrades open
+	// when unreachable so the pipeline keeps serving.
+	if s.cfg.Injection.Enabled {
+		resp.Sidecars["injection-guard"] = s.pingSidecar(r.Context(), s.cfg.Injection.PredictURL+"/health")
 	}
 
 	w.Header().Set("Content-Type", "application/json")

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/bitkaio/palena-websearch-mcp/internal/config"
+	"github.com/bitkaio/palena-websearch-mcp/internal/injection"
 	palenaOTel "github.com/bitkaio/palena-websearch-mcp/internal/otel"
 	"github.com/bitkaio/palena-websearch-mcp/internal/output"
 	"github.com/bitkaio/palena-websearch-mcp/internal/pii"
@@ -91,6 +92,20 @@ func main() {
 		logger.Info("pii processing disabled")
 	}
 
+	// Create prompt-injection processor. Always constructed, but Process()
+	// is a no-op when cfg.Injection.Enabled is false — the pipeline does
+	// not branch on the optional state, the processor handles it.
+	injProc := injection.NewProcessor(cfg.Injection, logger)
+	if cfg.Injection.Enabled {
+		logger.Info("injection processor initialized",
+			"mode", cfg.Injection.Mode,
+			"model", cfg.Injection.Model,
+			"predict_url", cfg.Injection.PredictURL,
+		)
+	} else {
+		logger.Info("injection scanning disabled")
+	}
+
 	// Create policy components (nil when disabled / not needed).
 	domainFilter := policy.NewDomainFilter(cfg.Policy, logger)
 	robotsChecker := policy.NewRobotsChecker(cfg.Policy, logger)
@@ -105,7 +120,7 @@ func main() {
 	}
 
 	// Create and start MCP server.
-	srv := transport.NewServer(cfg, searchClient, sc, domainFilter, robotsChecker, rateLimiter, piiProc, rr, meters, provExporter, promHandler, logger)
+	srv := transport.NewServer(cfg, searchClient, sc, domainFilter, robotsChecker, rateLimiter, piiProc, injProc, rr, meters, provExporter, promHandler, logger)
 
 	// Graceful shutdown on SIGINT/SIGTERM.
 	done := make(chan os.Signal, 1)

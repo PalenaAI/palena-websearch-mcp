@@ -4,6 +4,20 @@ All notable changes to Palena are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- **Prompt-injection defense** via a Hugging Face Text Embeddings Inference (TEI) sidecar serving `deepset/deberta-v3-base-injection`
+  - Three modes: `audit` (detect and log), `annotate` (wrap suspicious chunks in `<untrusted-content>` markers), `block` (drop documents containing any over-threshold chunk)
+  - Per-paragraph chunked scoring catches short malicious paragraphs hidden inside otherwise legitimate pages
+  - Pluggable model — swap `deepset/deberta-v3-base-injection` for any HuggingFace `SequenceClassification` model (e.g. a fine-tuned successor on the same `microsoft/deberta-v3-base` backbone) by changing `injection.predictURL` and the sidecar `--model-id` only
+  - Configurable injection-label name (`injection.injectionLabel`) so fine-tuned models with different label conventions work without code changes
+  - Audit records that never contain chunk text — only counts, max/mean scores, and over-threshold counts
+  - Graceful degradation when the TEI sidecar is unreachable
+  - New `injection-guard` service in `deploy/docker-compose.yml`, disabled-by-default `injection:` config block in `palena.yaml`, and `PALENA_INJECTION_*` env overrides
+  - Documentation: [`docs/prompt-injection.md`](docs/prompt-injection.md)
+
 ## [0.1.0] - 2026-04-01
 
 Initial implementation of the Palena MCP Server.
