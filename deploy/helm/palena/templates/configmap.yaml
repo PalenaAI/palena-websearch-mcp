@@ -40,9 +40,9 @@ data:
         httpGet: 10s
         browserPage: 15s
         browserNav: 30s
-      chromiumCDP:
-        {{- if .Values.chromium.enabled }}
-        endpoint: "ws://{{ include "palena.fullname" . }}-chromium:{{ .Values.chromium.service.port }}"
+      playwright:
+        {{- if .Values.playwright.enabled }}
+        endpoint: "ws://{{ include "palena.fullname" . }}-playwright:{{ .Values.playwright.service.port }}"
         {{- else }}
         endpoint: ""
         {{- end }}

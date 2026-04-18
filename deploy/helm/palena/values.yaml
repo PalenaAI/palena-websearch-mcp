@@ -94,21 +94,25 @@ presidio:
         memory: 512Mi
 
 # =============================================================================
-# Chromium — headless browser pool for L1/L2 scraping
+# Playwright — headless browser pool for L1/L2 scraping
 # =============================================================================
-chromium:
+# Runs Microsoft's official Playwright image with `playwright run-server`.
+# The Go client (playwright-go) connects via BrowserType.Connect().
+playwright:
   enabled: true
 
   image:
-    repository: browserless/chromium
-    tag: latest
+    repository: mcr.microsoft.com/playwright
+    tag: v1.57.0-jammy
     pullPolicy: IfNotPresent
+
+  # Must match the playwright npm version the Go client expects. Keep in sync
+  # with deploy/Dockerfile PLAYWRIGHT_VERSION and playwright-go compatibility.
+  driverVersion: "1.57.0"
 
   service:
     type: ClusterIP
     port: 3000
-
-  maxConcurrentSessions: 3
 
   resources:
     requests:

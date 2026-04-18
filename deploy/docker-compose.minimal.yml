@@ -25,7 +25,7 @@ services:
       PALENA_SEARCH_SEARXNG_URL: http://searxng:8080
       # Disable sidecars that are not present.
       PALENA_PII_ENABLED: "false"
-      PALENA_SCRAPER_CHROMIUM_ENDPOINT: ""
+      PALENA_SCRAPER_PLAYWRIGHT_ENDPOINT: ""
       PALENA_RERANKER_PROVIDER: none
     depends_on:
       searxng:

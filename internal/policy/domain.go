@@ -1,5 +1,5 @@
-// Copyright (c) 2026 BITKAIO LLC. All rights reserved.
-// Use of this source code is governed by the AGPL-3.0 license.
+// Copyright (c) 2026 bitkaio LLC. All rights reserved.
+// Licensed under the Apache License, Version 2.0.
 
 package policy
 

@@ -89,16 +89,16 @@ type RerankerConfig struct {
 type ScraperConfig struct {
 	MaxConcurrency   int                    `yaml:"maxConcurrency"`
 	Timeouts         ScraperTimeoutsConfig  `yaml:"timeouts"`
-	ChromiumCDP      ChromiumCDPConfig      `yaml:"chromiumCDP"`
+	Playwright       PlaywrightConfig       `yaml:"playwright"`
 	Stealth          StealthConfig          `yaml:"stealth"`
 	Proxy            ProxyConfig            `yaml:"proxy"`
 	ContentDetection ContentDetectionConfig `yaml:"contentDetection"`
 }
 
-// ChromiumCDPConfig holds settings for connecting to an external Chromium container.
-type ChromiumCDPConfig struct {
-	Endpoint string `yaml:"endpoint"` // WebSocket URL, e.g. ws://chromium:9222
-	MaxTabs  int    `yaml:"maxTabs"`  // max concurrent browser tabs
+// PlaywrightConfig holds settings for connecting to an external Playwright server.
+type PlaywrightConfig struct {
+	Endpoint string `yaml:"endpoint"` // ws:// URL exposed by `playwright run-server`
+	MaxTabs  int    `yaml:"maxTabs"`  // max concurrent browser contexts
 }
 
 // StealthConfig controls anti-detection measures for L2 extraction.
@@ -230,8 +230,8 @@ func (c *Config) setDefaults() {
 			BrowserPage: 15 * time.Second,
 			BrowserNav:  30 * time.Second,
 		},
-		ChromiumCDP: ChromiumCDPConfig{
-			Endpoint: "ws://chromium:9222",
+		Playwright: PlaywrightConfig{
+			Endpoint: "ws://playwright:3000",
 			MaxTabs:  3,
 		},
 		Stealth: StealthConfig{
@@ -366,8 +366,8 @@ func (c *Config) applyEnvOverrides() {
 	if v := os.Getenv("PALENA_SEARCH_QUERY_EXPANSION_ENABLED"); v != "" {
 		c.Search.QueryExpansion.Enabled = strings.EqualFold(v, "true")
 	}
-	if v := os.Getenv("PALENA_SCRAPER_CHROMIUM_ENDPOINT"); v != "" {
-		c.Scraper.ChromiumCDP.Endpoint = v
+	if v := os.Getenv("PALENA_SCRAPER_PLAYWRIGHT_ENDPOINT"); v != "" {
+		c.Scraper.Playwright.Endpoint = v
 	}
 	if v := os.Getenv("PALENA_SCRAPER_PROXY_ENABLED"); v != "" {
 		c.Scraper.Proxy.Enabled = strings.EqualFold(v, "true")

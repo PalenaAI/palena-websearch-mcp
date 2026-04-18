@@ -1,5 +1,5 @@
-// Copyright (c) 2026 BITKAIO LLC. All rights reserved.
-// Use of this source code is governed by the AGPL-3.0 license.
+// Copyright (c) 2026 bitkaio LLC. All rights reserved.
+// Licensed under the Apache License, Version 2.0. See LICENSE for details.
 
 package scraper
 
@@ -12,38 +12,36 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chromedp/cdproto/emulation"
-	"github.com/chromedp/cdproto/page"
-	"github.com/chromedp/chromedp"
 	readability "github.com/go-shiori/go-readability"
+	"github.com/playwright-community/playwright-go"
 
 	"github.com/bitkaio/palena-websearch-mcp/internal/config"
 )
 
 // L2Extractor applies stealth anti-detection measures and optional proxy
-// rotation on top of headless Chromium extraction.
+// rotation on top of Playwright browser extraction.
 type L2Extractor struct {
-	endpoint  string
-	tabSem    chan struct{} // shared with L1 or separate — strategy decides
+	client    *playwrightClient
+	tabSem    chan struct{}
 	proxyPool *ProxyPool
 	logger    *slog.Logger
 	cfg       config.ScraperConfig
 }
 
-// NewL2Extractor creates an L2 extractor. Returns nil if no CDP endpoint
-// is configured or stealth is disabled.
-func NewL2Extractor(cfg config.ScraperConfig, proxyPool *ProxyPool, logger *slog.Logger) *L2Extractor {
-	if cfg.ChromiumCDP.Endpoint == "" || !cfg.Stealth.Enabled {
+// NewL2Extractor creates an L2 extractor. Returns nil if the Playwright
+// client is nil or stealth is disabled.
+func NewL2Extractor(cfg config.ScraperConfig, client *playwrightClient, proxyPool *ProxyPool, logger *slog.Logger) *L2Extractor {
+	if client == nil || !cfg.Stealth.Enabled {
 		return nil
 	}
 
-	maxTabs := cfg.ChromiumCDP.MaxTabs
+	maxTabs := cfg.Playwright.MaxTabs
 	if maxTabs <= 0 {
 		maxTabs = 3
 	}
 
 	return &L2Extractor{
-		endpoint:  cfg.ChromiumCDP.Endpoint,
+		client:    client,
 		tabSem:    make(chan struct{}, maxTabs),
 		proxyPool: proxyPool,
 		logger:    logger,
@@ -55,7 +53,6 @@ func NewL2Extractor(cfg config.ScraperConfig, proxyPool *ProxyPool, logger *slog
 func (e *L2Extractor) Extract(ctx context.Context, rawURL string) (*L1Result, error) {
 	start := time.Now()
 
-	// Acquire tab semaphore.
 	select {
 	case e.tabSem <- struct{}{}:
 		defer func() { <-e.tabSem }()
@@ -63,7 +60,6 @@ func (e *L2Extractor) Extract(ctx context.Context, rawURL string) (*L1Result, er
 		return nil, fmt.Errorf("scraper: L2 tab semaphore: %w", ctx.Err())
 	}
 
-	// Select proxy (if available).
 	proxyURL := ""
 	if e.proxyPool != nil {
 		proxyURL = e.proxyPool.Next()
@@ -73,7 +69,6 @@ func (e *L2Extractor) Extract(ctx context.Context, rawURL string) (*L1Result, er
 
 	elapsed := time.Since(start)
 	if err != nil {
-		// Mark proxy as failed if one was used.
 		if proxyURL != "" {
 			e.proxyPool.MarkFailed(proxyURL)
 		}
@@ -98,58 +93,69 @@ func (e *L2Extractor) Extract(ctx context.Context, rawURL string) (*L1Result, er
 	return result, nil
 }
 
-// extractStealth performs CDP extraction with anti-detection measures.
+// extractStealth performs Playwright extraction with anti-detection measures.
 func (e *L2Extractor) extractStealth(ctx context.Context, rawURL, proxyURL string) (*L1Result, error) {
 	parsedURL, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("scraper: L2 parse URL: %w", err)
 	}
 
-	// Connect to the remote Chromium instance.
-	allocCtx, allocCancel := chromedp.NewRemoteAllocator(ctx, e.endpoint)
-	defer allocCancel()
+	vp := randomViewport()
+	ua := randomStealthUA(vp)
+
+	contextOpts := playwright.BrowserNewContextOptions{
+		UserAgent: playwright.String(ua),
+		Viewport: &playwright.Size{
+			Width:  vp.width,
+			Height: vp.height,
+		},
+		Locale: playwright.String("en-US"),
+	}
+	if proxyURL != "" {
+		contextOpts.Proxy = &playwright.Proxy{Server: proxyURL}
+	}
+
+	browserCtx, err := e.client.browser.NewContext(contextOpts)
+	if err != nil {
+		return nil, fmt.Errorf("scraper: L2 new context: %w", err)
+	}
+	defer func() { _ = browserCtx.Close() }()
 
 	pageTimeout := e.cfg.Timeouts.BrowserPage
 	if pageTimeout <= 0 {
 		pageTimeout = 15 * time.Second
 	}
-	tabCtx, tabCancel := context.WithTimeout(allocCtx, pageTimeout)
-	defer tabCancel()
+	navTimeout := e.cfg.Timeouts.BrowserNav
+	if navTimeout <= 0 {
+		navTimeout = 30 * time.Second
+	}
+	browserCtx.SetDefaultTimeout(float64(pageTimeout.Milliseconds()))
+	browserCtx.SetDefaultNavigationTimeout(float64(navTimeout.Milliseconds()))
 
-	tabCtx, tabCancel2 := chromedp.NewContext(tabCtx)
-	defer tabCancel2()
-
-	// Generate randomized fingerprint.
-	vp := randomViewport()
-	ua := randomStealthUA(vp)
-
-	// Build stealth action sequence.
-	actions := []chromedp.Action{
-		// Set viewport dimensions.
-		emulation.SetDeviceMetricsOverride(int64(vp.width), int64(vp.height), 1.0, false),
-
-		// Set user agent.
-		emulation.SetUserAgentOverride(ua),
-
-		// Inject stealth scripts before any page JS runs.
-		chromedp.ActionFunc(func(ctx context.Context) error {
-			script := buildStealthScript()
-			_, err := page.AddScriptToEvaluateOnNewDocument(script).Do(ctx)
-			return err
-		}),
+	// Inject stealth patches before any page JS runs.
+	if err := browserCtx.AddInitScript(playwright.Script{
+		Content: playwright.String(buildStealthScript()),
+	}); err != nil {
+		return nil, fmt.Errorf("scraper: L2 add init script: %w", err)
 	}
 
-	// Navigate and extract.
-	var html string
-	actions = append(actions,
-		chromedp.Navigate(rawURL),
-		chromedp.WaitReady("body"),
-		chromedp.Sleep(800*time.Millisecond), // longer settle for stealth
-		chromedp.OuterHTML("html", &html),
-	)
+	page, err := browserCtx.NewPage()
+	if err != nil {
+		return nil, fmt.Errorf("scraper: L2 new page: %w", err)
+	}
 
-	if err := chromedp.Run(tabCtx, actions...); err != nil {
-		return nil, fmt.Errorf("scraper: L2 chromedp for %s: %w", rawURL, err)
+	if _, err := page.Goto(rawURL, playwright.PageGotoOptions{
+		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
+	}); err != nil {
+		return nil, fmt.Errorf("scraper: L2 goto %s: %w", rawURL, err)
+	}
+
+	// Longer settle for stealth to let lazy-loaded JS complete.
+	page.WaitForTimeout(800)
+
+	html, err := page.Content()
+	if err != nil {
+		return nil, fmt.Errorf("scraper: L2 content for %s: %w", rawURL, err)
 	}
 
 	bot := detectBotBlock(html)
@@ -186,7 +192,7 @@ func randomViewport() viewport {
 	}
 }
 
-// stealthUAs maps viewport widths to plausible UA strings.
+// stealthUAs is a pool of plausible UA strings rotated per request.
 var stealthUAs = []string{
 	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
 	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
@@ -200,8 +206,8 @@ func randomStealthUA(_ viewport) string {
 }
 
 // buildStealthScript returns JavaScript that patches common automation
-// detection vectors. Injected via page.AddScriptToEvaluateOnNewDocument
-// so it runs before any page scripts.
+// detection vectors. Injected via BrowserContext.AddInitScript so it runs
+// before any page scripts.
 func buildStealthScript() string {
 	return `
 // Override navigator.webdriver to false.
@@ -246,7 +252,7 @@ Object.defineProperty(navigator, 'languages', {
   configurable: true,
 });
 
-// Patch permissions query to deny 'notifications' (common bot test).
+// Patch permissions query to match real browser behavior for notifications.
 const originalQuery = window.navigator.permissions.query;
 window.navigator.permissions.query = (parameters) =>
   parameters.name === 'notifications'

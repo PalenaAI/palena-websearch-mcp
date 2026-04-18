@@ -27,12 +27,18 @@ import (
 )
 
 // WebSearchInput matches the web_search tool's inputSchema from docs/MCP.md.
+//
+// The jsonschema tag is used as the field description by the MCP Go SDK's
+// schema inference (google/jsonschema-go). That library treats the entire
+// tag value as the description — no key=value syntax is supported, so enums,
+// defaults, and numeric bounds are enforced at runtime in HandleWebSearch
+// rather than via the schema. See docs/MCP.md for the authoritative schema.
 type WebSearchInput struct {
-	Query      string `json:"query" jsonschema:"description=The search query"`
-	Category   string `json:"category,omitempty" jsonschema:"enum=general,enum=news,enum=code,enum=science,default=general,description=Search category — routes to different search engines"`
-	Language   string `json:"language,omitempty" jsonschema:"default=en,description=Language code for search results"`
-	TimeRange  string `json:"timeRange,omitempty" jsonschema:"enum=day,enum=week,enum=month,enum=year,description=Filter results by time range"`
-	MaxResults int    `json:"maxResults,omitempty" jsonschema:"default=5,minimum=1,maximum=20,description=Maximum number of results to return"`
+	Query      string `json:"query" jsonschema:"The search query"`
+	Category   string `json:"category,omitempty" jsonschema:"Search category — one of: general, news, code, science (default general)"`
+	Language   string `json:"language,omitempty" jsonschema:"Language code for search results, e.g. en, de, fr (default en)"`
+	TimeRange  string `json:"timeRange,omitempty" jsonschema:"Filter results by time range — one of: day, week, month, year"`
+	MaxResults int    `json:"maxResults,omitempty" jsonschema:"Maximum number of results to return, 1-20 (default 5)"`
 }
 
 // WebSearchOutput is the structured output returned alongside the text content.

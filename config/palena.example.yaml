@@ -57,11 +57,11 @@ scraper:
     browserPage: 15s                       # L1/L2: per-page render timeout.
     browserNav: 30s                        # L1/L2: navigation timeout.
 
-  chromiumCDP:
-    endpoint: "ws://chromium:3000"         # PALENA_SCRAPER_CHROMIUM_ENDPOINT
-      # WebSocket URL to a headless Chromium instance.
-    # Set to "" to disable L1/L2 scraping entirely.
-    maxTabs: 3                             # Max concurrent browser tabs (semaphore).
+  playwright:
+    endpoint: "ws://playwright:3000"       # PALENA_SCRAPER_PLAYWRIGHT_ENDPOINT
+      # WebSocket URL exposed by `playwright run-server` in the sidecar.
+    # Set to "" to disable L1/L2 browser scraping entirely (L0 still runs).
+    maxTabs: 3                             # Max concurrent browser contexts (semaphore).
 
   stealth:
     enabled: true                          # Enable L2 stealth anti-detection measures.

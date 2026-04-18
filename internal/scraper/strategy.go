@@ -1,5 +1,5 @@
-// Copyright (c) 2026 BITKAIO LLC. All rights reserved.
-// Use of this source code is governed by the AGPL-3.0 license.
+// Copyright (c) 2026 bitkaio LLC. All rights reserved.
+// Licensed under the Apache License, Version 2.0. See LICENSE for details.
 
 package scraper
 
@@ -28,25 +28,42 @@ type ScrapeResult struct {
 // Scraper orchestrates tiered extraction across a set of URLs.
 type Scraper struct {
 	l0     *L0Extractor
-	l1     *L1Extractor // nil if Chromium sidecar is not configured
+	l1     *L1Extractor // nil if Playwright sidecar is not configured
 	l2     *L2Extractor // nil if stealth is not configured/enabled
+	pw     *playwrightClient
 	logger *slog.Logger
 	cfg    config.ScraperConfig
 }
 
 // NewScraper creates a scraper with the configured extraction levels.
-// L1 and L2 are optional — if the Chromium sidecar endpoint is empty,
+// L1 and L2 are optional — if the Playwright sidecar endpoint is empty,
 // they are nil and URLs that fail L0 are reported as scrape failures.
-func NewScraper(cfg config.ScraperConfig, logger *slog.Logger) *Scraper {
+// Returns an error if the Playwright driver fails to start or connect.
+func NewScraper(cfg config.ScraperConfig, logger *slog.Logger) (*Scraper, error) {
+	pw, err := newPlaywrightClient(cfg.Playwright.Endpoint, cfg.Timeouts.BrowserNav, logger)
+	if err != nil {
+		return nil, err
+	}
+
 	proxyPool := NewProxyPool(cfg.Proxy, logger)
 
 	return &Scraper{
 		l0:     NewL0Extractor(cfg, logger),
-		l1:     NewL1Extractor(cfg, logger),
-		l2:     NewL2Extractor(cfg, proxyPool, logger),
+		l1:     NewL1Extractor(cfg, pw, logger),
+		l2:     NewL2Extractor(cfg, pw, proxyPool, logger),
+		pw:     pw,
 		logger: logger,
 		cfg:    cfg,
+	}, nil
+}
+
+// Close releases the Playwright driver and disconnects from the sidecar.
+// Safe to call when Playwright was never configured.
+func (s *Scraper) Close() error {
+	if s == nil || s.pw == nil {
+		return nil
 	}
+	return s.pw.Close()
 }
 
 // ScrapeAll extracts content from all provided URLs concurrently, respecting
@@ -80,11 +97,11 @@ func (s *Scraper) ScrapeAll(ctx context.Context, urls []string) []ScrapeResult {
 // scrapeOne runs the tiered extraction strategy for a single URL:
 //
 //	L0 (HTTP+readability)
-//	  → if NeedsJavaScript → L1 (headless Chromium via CDP)
-//	    → if bot-blocked → L2 (stealth + proxy)
+//	  → if NeedsJavaScript → L1 (Playwright headless)
+//	    → if bot-blocked → L2 (Playwright stealth + proxy)
 //	      → if still blocked → return error
 //
-// If the Chromium sidecar is unavailable, L1/L2 are skipped and URLs
+// If the Playwright sidecar is unavailable, L1/L2 are skipped and URLs
 // that need JS rendering are reported as failures.
 func (s *Scraper) scrapeOne(ctx context.Context, rawURL string) ScrapeResult {
 	// --- Level 0 ---
@@ -123,7 +140,7 @@ func (s *Scraper) scrapeOne(ctx context.Context, rawURL string) ScrapeResult {
 // error), since the page might work in a browser context.
 func (s *Scraper) tryEscalateFromL0Failure(ctx context.Context, result ScrapeResult) ScrapeResult {
 	if s.l1 == nil {
-		return result // no Chromium → keep original L0 error
+		return result // no Playwright sidecar → keep original L0 error
 	}
 
 	s.logger.InfoContext(ctx, "L0 failed, attempting L1 as fallback",
@@ -139,10 +156,10 @@ func (s *Scraper) tryEscalateFromL0Failure(ctx context.Context, result ScrapeRes
 	return l1Result
 }
 
-// tryL1 attempts Level 1 extraction via headless Chromium.
+// tryL1 attempts Level 1 extraction via Playwright headless browser.
 func (s *Scraper) tryL1(ctx context.Context, rawURL string, fallback ScrapeResult) ScrapeResult {
 	if s.l1 == nil {
-		s.logger.WarnContext(ctx, "L1 unavailable (no Chromium endpoint), returning L0 result",
+		s.logger.WarnContext(ctx, "L1 unavailable (no Playwright endpoint), returning L0 result",
 			"url", rawURL,
 		)
 		return fallback

@@ -2,7 +2,7 @@
 # Use of this source code is governed by the AGPL-3.0 license.
 #
 # Full-stack Docker Compose for Palena MCP Server.
-# Includes all sidecars: SearXNG, Presidio, Chromium, FlashRank.
+# Includes all sidecars: SearXNG, Presidio, Playwright, FlashRank.
 #
 # Usage:
 #   docker compose -f deploy/docker-compose.yml up --build
@@ -24,7 +24,7 @@ services:
     environment:
       PALENA_CONFIG_PATH: /config/palena.yaml
       PALENA_SEARCH_SEARXNG_URL: http://searxng:8080
-      PALENA_SCRAPER_CHROMIUM_ENDPOINT: ws://chromium:3000
+      PALENA_SCRAPER_PLAYWRIGHT_ENDPOINT: ws://playwright:3000
       PALENA_PII_ANALYZER_URL: http://presidio-analyzer:5002
       PALENA_PII_ANONYMIZER_URL: http://presidio-anonymizer:5001
       PALENA_RERANKER_PROVIDER: flashrank
@@ -36,7 +36,7 @@ services:
         condition: service_started
       presidio-anonymizer:
         condition: service_started
-      chromium:
+      playwright:
         condition: service_started
       flashrank:
         condition: service_started
@@ -69,7 +69,7 @@ services:
     ports:
       - "5002:5002"
     environment:
-      ANALYZER_PORT: "5002"
+      PORT: "5002"
     restart: unless-stopped
 
   # ===========================================================================
@@ -80,20 +80,29 @@ services:
     ports:
       - "5001:5001"
     environment:
-      ANONYMIZER_PORT: "5001"
+      PORT: "5001"
     restart: unless-stopped
 
   # ===========================================================================
-  # Chromium — headless browser pool for L1/L2 scraping
+  # Playwright — headless browser pool for L1/L2 scraping
   # ===========================================================================
-  chromium:
-    image: browserless/chromium:latest
+  # Uses Microsoft's official Playwright image and runs `playwright run-server`
+  # to expose a WebSocket endpoint that the Go client connects to via
+  # BrowserType.Connect(). The image ships Chromium, Firefox, and WebKit
+  # pre-installed; Palena only drives Chromium today.
+  playwright:
+    image: mcr.microsoft.com/playwright:v1.57.0-jammy
+    command:
+      - npx
+      - -y
+      - playwright@1.57.0
+      - run-server
+      - --port
+      - "3000"
+      - --host
+      - 0.0.0.0
     ports:
       - "3000:3000"
-    environment:
-      # Connection limit matches scraper.chromiumCDP.maxTabs.
-      MAX_CONCURRENT_SESSIONS: "3"
-      TIMEOUT: "30000"
     restart: unless-stopped
 
   # ===========================================================================

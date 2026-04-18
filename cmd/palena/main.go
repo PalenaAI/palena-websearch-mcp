@@ -70,7 +70,11 @@ func main() {
 
 	// Create pipeline components.
 	searchClient := search.NewSearXNGClient(cfg.Search, logger)
-	sc := scraper.NewScraper(cfg.Scraper, logger)
+	sc, err := scraper.NewScraper(cfg.Scraper, logger)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
+		os.Exit(1)
+	}
 
 	rr, err := reranker.New(cfg.Reranker, logger)
 	if err != nil {
@@ -128,6 +132,11 @@ func main() {
 	// Flush provenance records.
 	if provExporter != nil {
 		provExporter.Close()
+	}
+
+	// Disconnect Playwright sidecar and stop local driver.
+	if err := sc.Close(); err != nil {
+		logger.Error("scraper shutdown error", "error", err)
 	}
 
 	// Shut down OTel providers.

@@ -1,0 +1,62 @@
+{{/*
+Copyright (c) 2026 bitkaio LLC. All rights reserved.
+Licensed under the Apache License, Version 2.0. See LICENSE for details.
+*/}}
+{{- if .Values.playwright.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "palena.fullname" . }}-playwright
+  labels:
+    {{- include "palena.labels" . | nindent 4 }}
+    app.kubernetes.io/component: playwright
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "palena.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: playwright
+  template:
+    metadata:
+      labels:
+        {{- include "palena.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: playwright
+    spec:
+      containers:
+        - name: playwright
+          image: "{{ .Values.playwright.image.repository }}:{{ .Values.playwright.image.tag }}"
+          imagePullPolicy: {{ .Values.playwright.image.pullPolicy }}
+          command:
+            - npx
+            - -y
+            - playwright@{{ .Values.playwright.driverVersion }}
+            - run-server
+            - --port
+            - {{ .Values.playwright.service.port | quote }}
+            - --host
+            - 0.0.0.0
+          ports:
+            - name: ws
+              containerPort: {{ .Values.playwright.service.port }}
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.playwright.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "palena.fullname" . }}-playwright
+  labels:
+    {{- include "palena.labels" . | nindent 4 }}
+    app.kubernetes.io/component: playwright
+spec:
+  type: {{ .Values.playwright.service.type }}
+  ports:
+    - port: {{ .Values.playwright.service.port }}
+      targetPort: ws
+      protocol: TCP
+      name: ws
+  selector:
+    {{- include "palena.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: playwright
+{{- end }}

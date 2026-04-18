@@ -1,43 +1,93 @@
 # Palena
 
-Enterprise-grade web search MCP server for regulated industries.
+**Enterprise-grade web search for AI — with compliance boundaries built in.**
 
-Palena exposes a single MCP tool (`web_search`) that orchestrates a five-stage pipeline: search, scrape, PII detection, reranking, and formatting. Every piece of content is hashed, audited, and optionally redacted before reaching the LLM.
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Go](https://img.shields.io/badge/go-1.26%2B-00ADD8.svg)](https://go.dev/)
+[![MCP](https://img.shields.io/badge/MCP-SSE%20%7C%20Streamable%20HTTP-6B46C1.svg)](https://modelcontextprotocol.io/)
+[![OpenTelemetry](https://img.shields.io/badge/observability-OpenTelemetry-425CC7.svg)](https://opentelemetry.io/)
 
-The name "Palena" is Hawaiian for *boundary, limit, border* — reflecting the product's focus on enforcing compliance boundaries around AI-powered web access.
+Palena is a single-binary [MCP](https://modelcontextprotocol.io/) server that turns the noisy public web into LLM-ready context — **searched, scraped, de-PII'd, reranked, and hash-chained for audit** — so your agents can browse without tripping every compliance officer on the floor.
 
-## Pipeline
+Built for fintech, healthtech, and govtech teams who cannot send raw third-party HTML directly to a foundation model, but still need their AI to have fresh, cited, reproducible knowledge from the live internet.
+
+> *Palena* — Hawaiian for *boundary, limit, border*.
+
+---
+
+## Why Palena
+
+| Problem | What most "web search" tools do | What Palena does |
+|---|---|---|
+| Raw pages leak PII into prompts | Ship HTML as-is | Presidio audit/redact/block *before* the LLM sees it |
+| Bot-protected sites return nothing | Fail silently | Tiered L0→L1→L2 escalation (readability → headless → stealth+proxy) |
+| "We scraped this" has no receipts | No trace | Three-stage SHA-256 hash chain per document |
+| Results are ranked by a generic search engine | Trust the top 10 | Pluggable reranker (KServe GPU, FlashRank CPU, RankLLM, or none) |
+| Compliance only gets shown a demo | Hope for the best | Domain allow/blocklists, robots.txt enforcement, per-domain rate limits, OTel traces on every span |
+
+---
+
+## The Pipeline
 
 ```
-MCP Request
-    |
-    v
-+-----------+     +----------+     +-----+     +--------+     +--------+
-|  1.SEARCH | --> | 2.SCRAPE | --> | 3.PII| --> |4.RERANK| --> |5.FORMAT|
-|  SearXNG  |     | L0/L1/L2 |     |Presidio|   |Pluggable|   |Markdown|
-+-----------+     +----------+     +-----+     +--------+     +--------+
-    |                                                              |
-    v                                                              v
- query expansion                                        citations, provenance
- engine routing                                         hashes, token chunks
+                  MCP tools/call web_search
+                            │
+                            ▼
+ ┌──────────────────────────────────────────────────────────────┐
+ │  1. SEARCH      SearXNG metasearch                           │
+ │                 query expansion · engine routing · dedup     │
+ ├──────────────────────────────────────────────────────────────┤
+ │  2. POLICY      domain allow/block · robots.txt · rate limit │
+ ├──────────────────────────────────────────────────────────────┤
+ │  3. SCRAPE      L0  HTTP + readability       (fast path)     │
+ │                 L1  Playwright headless      (needs JS)      │
+ │                 L2  Playwright + stealth/proxy (anti-bot)    │
+ ├──────────────────────────────────────────────────────────────┤
+ │  4. PII         Microsoft Presidio · audit / redact / block  │
+ ├──────────────────────────────────────────────────────────────┤
+ │  5. RERANK      FlashRank · KServe cross-encoder · RankLLM   │
+ ├──────────────────────────────────────────────────────────────┤
+ │  6. FORMAT      markdown · citations · SHA-256 provenance    │
+ └──────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+                     MCP tool_result
 ```
 
-1. **Search** -- queries SearXNG for results with category-based engine routing
-2. **Scrape** -- tiered extraction: HTTP + Readability (L0) -> headless Chromium (L1) -> stealth + proxy (L2)
-3. **PII** -- Microsoft Presidio analysis with configurable modes: audit, redact, or block
-4. **Rerank** -- pluggable cross-encoder models (KServe GPU, FlashRank CPU, LLM-as-reranker, or none)
-5. **Format** -- LLM-ready markdown with inline citations, source URLs, and SHA-256 provenance hashes
+Every stage is an OpenTelemetry span. Every document gets three hashes (raw HTML → extracted markdown → final delivered content). The audit trail is ready to ship to ClickHouse out of the box.
 
-## Features
+---
 
-- **Tiered scraping** -- always tries the cheapest method first; escalates to browser rendering only when needed
-- **PII compliance** -- detect, redact, or block documents containing personal data; audit records never contain PII values
-- **Content provenance** -- three-stage SHA-256 hash chain (raw HTML -> extracted markdown -> final content) for verifiable data lineage
-- **Pluggable reranking** -- swap between GPU cross-encoders, CPU ONNX models, LLM-based scoring, or no reranking
-- **OpenTelemetry** -- distributed traces and Prometheus metrics across all pipeline stages
-- **Graceful degradation** -- optional sidecars (Presidio, Chromium, reranker) can be absent; pipeline continues with reduced capability
-- **Config-driven** -- YAML config with environment variable overrides; no hardcoded behavior
-- **Single binary** -- Go static binary (~15 MB), no Python/Node runtime in the core service
+## Live Example
+
+Real output from the MCP server answering *"latest AI hot topics 2026"* (category: `news`):
+
+```json
+{
+  "query": "latest AI hot topics 2026",
+  "result_count": 3,
+  "reranker_used": "flashrank",
+  "pii_mode": "audit",
+  "pii_checked": true,
+  "search_engines": ["google news", "duckduckgo", "bing news"],
+  "total_duration_ms": 4414,
+  "results": [
+    { "title": "OpenClaw Exposes the Real Cybersecurity Risks of Agentic AI",
+      "score": 0.984, "scraper_level": 0,
+      "content_hash": "c3b4d690…" },
+    { "title": "Comprehensive AI Conference List for 2026: Dates, Locations, and Keynotes",
+      "score": 0.973, "scraper_level": 0,
+      "content_hash": "7af1205e…" },
+    { "title": "Can AI infrastructure costs be a value driver? — Oracle AI World 2026",
+      "score": 0.002, "scraper_level": 0,
+      "content_hash": "9e48c311…" }
+  ]
+}
+```
+
+Note how FlashRank pushes the substantive pieces to the top (0.98 / 0.97) and demotes the vendor-conference writeup that happens to contain the right keywords (0.002) — signal the stock SearXNG ranking does not surface.
+
+---
 
 ## Quick Start
 
@@ -47,7 +97,7 @@ MCP Request
 docker compose -f deploy/docker-compose.yml up --build
 ```
 
-Services: Palena, SearXNG, Presidio Analyzer, Presidio Anonymizer, Chromium, FlashRank.
+Brings up Palena + SearXNG + Presidio Analyzer + Presidio Anonymizer + Playwright + FlashRank.
 
 ### Minimal (L0 scraping only)
 
@@ -55,57 +105,66 @@ Services: Palena, SearXNG, Presidio Analyzer, Presidio Anonymizer, Chromium, Fla
 docker compose -f deploy/docker-compose.minimal.yml up --build
 ```
 
-Services: Palena + SearXNG only. No PII detection, no browser, no reranking.
+Palena + SearXNG only. ~200 MB image, no browser, no PII, no reranking.
 
-### Test the endpoint
+### Smoke-test the server
 
 ```bash
-# Health check
+# Sidecar health
 curl http://localhost:8080/health
+# → {"status":"ok","sidecars":{"searxng":"ok","presidio-analyzer":"ok",...}}
 
-# REST API
-curl -X POST http://localhost:8080/api/v1/search \
-  -H "Content-Type: application/json" \
-  -d '{"query": "kubernetes RBAC best practices", "maxResults": 3}'
+# List the exposed tool over MCP Streamable HTTP
+SESS=$(curl -sS -X POST http://localhost:8080/mcp \
+  -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"0.1"}}}' \
+  -D - -o /dev/null | awk '/Mcp-Session-Id/ {print $2}' | tr -d '\r')
+
+curl -sS -X POST http://localhost:8080/mcp \
+  -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' \
+  -H "Mcp-Session-Id: $SESS" \
+  -d '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+
+curl -sS -X POST http://localhost:8080/mcp \
+  -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' \
+  -H "Mcp-Session-Id: $SESS" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
 ```
+
+---
 
 ## MCP Client Integration
 
 ### LibreChat
 
-Add to `librechat.yaml`:
-
 ```yaml
+# librechat.yaml
 mcpServers:
   palena:
-    type: sse
-    url: http://palena:8080/sse
-```
-
-Or with Streamable HTTP:
-
-```yaml
-mcpServers:
-  palena:
-    type: streamableHttp
+    type: streamableHttp      # or: sse
     url: http://palena:8080/mcp
 ```
 
 ### Claude Desktop
 
-Add to your MCP server configuration:
-
 ```json
 {
   "mcpServers": {
-    "palena": {
-      "url": "http://localhost:8080/sse"
-    }
+    "palena": { "url": "http://localhost:8080/sse" }
   }
 }
 ```
 
-## MCP Tool: `web_search`
+### Cursor / Windsurf / custom agents
+
+Any MCP-compatible client works — connect to `/sse` (legacy event stream) or `/mcp` (Streamable HTTP).
+
+---
+
+## The `web_search` Tool
 
 ```json
 {
@@ -113,134 +172,150 @@ Add to your MCP server configuration:
   "inputSchema": {
     "type": "object",
     "properties": {
-      "query":      { "type": "string", "description": "The search query" },
-      "category":   { "type": "string", "enum": ["general", "news", "code", "science"], "default": "general" },
-      "language":   { "type": "string", "default": "en" },
-      "timeRange":  { "type": "string", "enum": ["day", "week", "month", "year"] },
-      "maxResults": { "type": "integer", "default": 5, "minimum": 1, "maximum": 20 }
+      "query":      { "type": "string",  "description": "The search query" },
+      "category":   { "type": "string",  "description": "general | news | code | science (default general)" },
+      "language":   { "type": "string",  "description": "ISO code — en, de, fr… (default en)" },
+      "timeRange":  { "type": "string",  "description": "day | week | month | year" },
+      "maxResults": { "type": "integer", "description": "1–20 (default 5)" }
     },
     "required": ["query"]
   }
 }
 ```
 
-The response includes formatted markdown with numbered results, relevance scores, source citations, and metadata (PII status, reranker used, search engines).
+The response is formatted markdown with numbered results, relevance scores, source citations, and structured metadata (PII status, reranker, engines hit, total latency).
+
+---
 
 ## Configuration
 
-Copy the annotated example and adjust for your deployment:
+Start from the annotated example:
 
 ```bash
 cp config/palena.example.yaml config/palena.yaml
 ```
 
-Key settings:
-
-| Section | What it controls | Key env overrides |
-|---------|-----------------|-------------------|
-| `search` | SearXNG URL, engines, language | `PALENA_SEARCH_SEARXNG_URL` |
-| `scraper` | Concurrency, timeouts, Chromium endpoint | `PALENA_SCRAPER_CHROMIUM_ENDPOINT` |
-| `pii` | Mode (audit/redact/block), Presidio URLs | `PALENA_PII_ENABLED`, `PALENA_PII_MODE` |
-| `reranker` | Provider (kserve/flashrank/rankllm/none) | `PALENA_RERANKER_PROVIDER` |
+| Section | Controls | Key env override |
+|---|---|---|
+| `search` | SearXNG URL, engines per category, default language | `PALENA_SEARCH_SEARXNG_URL` |
+| `scraper` | Concurrency, timeouts, Playwright WS endpoint, proxy pool | `PALENA_SCRAPER_PLAYWRIGHT_ENDPOINT` |
+| `pii` | Mode (audit / redact / block), Presidio URLs, entities | `PALENA_PII_MODE` |
+| `reranker` | Provider (`kserve` / `flashrank` / `rankllm` / `none`) | `PALENA_RERANKER_PROVIDER` |
+| `policy` | Domain allow/blocklists, robots.txt cache, rate limits | `PALENA_POLICY_DOMAIN_MODE` |
 | `provenance` | Hash chain, ClickHouse export | `PALENA_PROVENANCE_ENABLED` |
-| `otel` | Tracing and metrics exporters | `PALENA_OTEL_ENABLED` |
+| `otel` | Trace + metric exporters | `PALENA_OTEL_ENABLED` |
 
-See [`config/palena.example.yaml`](config/palena.example.yaml) for the full annotated reference.
+Full annotated reference: [`config/palena.example.yaml`](config/palena.example.yaml) · deep-dive: [`docs/CONFIG.md`](docs/CONFIG.md).
 
-## Architecture
+---
 
-Palena is a Go orchestrator that coordinates external sidecars over HTTP and WebSocket. All sidecars are optional except SearXNG.
+## Sidecar Matrix
+
+Palena is a Go orchestrator. Every external capability runs as its own container and is optional except SearXNG.
 
 | Sidecar | Image | Protocol | Required | Purpose |
-|---------|-------|----------|----------|---------|
-| SearXNG | `searxng/searxng` | HTTP JSON | Yes | Metasearch aggregation |
+|---|---|---|---|---|
+| SearXNG | `searxng/searxng` | HTTP JSON | **Yes** | Metasearch aggregation |
 | Presidio Analyzer | `mcr.microsoft.com/presidio-analyzer` | HTTP JSON | No | PII entity detection |
-| Presidio Anonymizer | `mcr.microsoft.com/presidio-anonymizer` | HTTP JSON | No | PII masking/replacement |
-| Chromium | `browserless/chromium` | WebSocket CDP | No | JS-rendered page extraction |
-| FlashRank | Custom Flask wrapper | HTTP JSON | No | CPU-based reranking |
-| KServe | KServe InferenceService | HTTP JSON | No | GPU-based reranking |
+| Presidio Anonymizer | `mcr.microsoft.com/presidio-anonymizer` | HTTP JSON | No | PII masking / replacement |
+| Playwright | `mcr.microsoft.com/playwright` | Playwright WS | No | JS-rendered page extraction (L1/L2) |
+| FlashRank | Flask + ONNX (bundled) | HTTP JSON | No | CPU cross-encoder reranking |
+| KServe | Your own InferenceService | HTTP JSON | No | GPU cross-encoder reranking |
+
+Missing sidecars trigger **graceful degradation**, not failure — L1/L2 disabled, PII reported as "not checked," reranker falls back to search-engine order.
 
 ### Deployment Profiles
 
 | Profile | Components | Footprint |
-|---------|-----------|-----------|
+|---|---|---|
 | **Minimal** | Palena + SearXNG | ~200 MB |
-| **Standard** | + Presidio + Chromium + FlashRank | ~2-3 GB |
-| **Enterprise** | + KServe GPU reranker | Variable (GPU) |
+| **Standard** | + Presidio + Playwright + FlashRank | ~2–3 GB |
+| **Enterprise** | + KServe GPU reranker (e.g. `mxbai-rerank`) | Variable (GPU) |
 
-### Helm
+### Helm (Kubernetes / OpenShift)
 
 ```bash
-# Standard deployment
+# Standard
 helm install palena deploy/helm/palena/
 
-# Minimal (no sidecars)
+# Minimal — disable all optional sidecars
 helm install palena deploy/helm/palena/ \
   --set presidio.enabled=false \
-  --set chromium.enabled=false \
+  --set playwright.enabled=false \
   --set flashrank.enabled=false
 
-# With FlashRank reranking
+# With your own GPU reranker
 helm install palena deploy/helm/palena/ \
-  --set flashrank.enabled=true
+  --set reranker.provider=kserve \
+  --set reranker.endpoint=http://mxbai-rerank.kserve.svc:8080
 ```
 
-## Endpoints
+---
+
+## HTTP Endpoints
 
 | Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/sse` | MCP SSE transport (event stream) |
-| `POST` | `/mcp` | MCP Streamable HTTP transport |
-| `POST` | `/api/v1/search` | REST API (non-MCP) |
-| `GET` | `/health` | Sidecar health checks |
-| `GET` | `/metrics` | Prometheus metrics (when OTel metrics enabled) |
+|---|---|---|
+| `GET`  | `/sse`      | MCP SSE transport (legacy event stream) |
+| `POST` | `/mcp`      | MCP Streamable HTTP transport |
+| `GET`  | `/health`   | Sidecar reachability probe |
+| `GET`  | `/metrics`  | Prometheus metrics (when OTel metrics enabled) |
 
-## Project Structure
+---
+
+## Project Layout
 
 ```
 palena-websearch-mcp/
-├── cmd/palena/              # Binary entry point
+├── cmd/palena/           # Binary entry point, config + server wiring
 ├── internal/
-│   ├── config/              # YAML config parsing and validation
-│   ├── search/              # SearXNG client, query expansion, dedup
-│   ├── scraper/             # L0/L1/L2 extraction, proxy pool, stealth
-│   ├── pii/                 # Presidio client, policy modes, audit records
-│   ├── reranker/            # Pluggable reranker interface and providers
-│   ├── output/              # Markdown formatting, provenance hashes
-│   ├── transport/           # MCP + REST server, tool handler
-│   └── otel/                # OpenTelemetry tracing and metrics
-├── config/                  # Default and example YAML configs
-├── deploy/                  # Dockerfiles, Compose files, Helm chart
-└── docs/                    # Subsystem documentation
+│   ├── config/           # YAML parsing, validation, env overrides
+│   ├── search/           # SearXNG client, query expansion, dedup
+│   ├── scraper/          # L0 readability · L1/L2 Playwright · stealth · proxy pool
+│   ├── pii/              # Presidio client, policy modes, PII-free audit records
+│   ├── reranker/         # Pluggable interface · KServe · FlashRank · RankLLM · no-op
+│   ├── policy/           # Domain filter, robots.txt, per-domain rate limit
+│   ├── output/           # Markdown formatting, provenance hash chain
+│   ├── transport/        # MCP SSE + Streamable HTTP, tool handler
+│   └── otel/             # Tracing + metrics setup
+├── config/               # Default + annotated example YAML
+├── deploy/               # Dockerfile, Compose (full + minimal), Helm chart
+└── docs/                 # Per-subsystem deep dives
 ```
+
+---
 
 ## Documentation
 
-| Document | Description |
-|----------|-------------|
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System design, component interactions, deployment |
+| Document | Topic |
+|---|---|
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System design, request lifecycle, concurrency model |
 | [`docs/SEARCH.md`](docs/SEARCH.md) | SearXNG integration, query expansion, engine routing |
-| [`docs/SCRAPER.md`](docs/SCRAPER.md) | Tiered extraction (L0/L1/L2), content detection |
-| [`docs/PII.md`](docs/PII.md) | Presidio integration, PII modes, audit logging |
-| [`docs/RERANKER.md`](docs/RERANKER.md) | Pluggable reranker interface, model options |
+| [`docs/SCRAPER.md`](docs/SCRAPER.md) | Tiered extraction, JS detection, stealth, proxy rotation |
+| [`docs/PII.md`](docs/PII.md) | Presidio setup, audit / redact / block modes |
+| [`docs/RERANKER.md`](docs/RERANKER.md) | Reranker interface, model options, API contracts |
 | [`docs/MCP.md`](docs/MCP.md) | MCP transport, tool schema, response format |
 | [`docs/CONFIG.md`](docs/CONFIG.md) | Full configuration reference |
-| [`docs/PROVENANCE.md`](docs/PROVENANCE.md) | Content provenance, hash chains, audit records |
+| [`docs/PROVENANCE.md`](docs/PROVENANCE.md) | Hash chain, audit records, ClickHouse schema |
+
+---
 
 ## Technology Stack
 
-- **Language:** Go 1.22+
-- **Search backend:** SearXNG (self-hosted metasearch)
-- **Content extraction:** go-readability (L0), chromedp (L1/L2)
-- **PII:** Microsoft Presidio Analyzer + Anonymizer
-- **Reranking:** KServe cross-encoder, FlashRank ONNX, RankLLM
-- **Observability:** OpenTelemetry traces + Prometheus metrics
-- **Transport:** MCP SSE, Streamable HTTP, REST API
-- **Configuration:** YAML + environment variable overrides
-- **Deployment:** Docker Compose, Helm (Kubernetes/OpenShift)
+- **Core:** Go 1.26+, single static binary
+- **Search:** [SearXNG](https://github.com/searxng/searxng) (self-hosted metasearch)
+- **Extraction:** [`go-shiori/go-readability`](https://github.com/go-shiori/go-readability) (L0), [`playwright-community/playwright-go`](https://github.com/playwright-community/playwright-go) against Microsoft's official Playwright image (L1/L2)
+- **PII:** Microsoft [Presidio](https://microsoft.github.io/presidio/) Analyzer + Anonymizer
+- **Reranking:** Mixedbread `mxbai-rerank` via KServe · [FlashRank](https://github.com/PrithivirajDamodaran/FlashRank) ONNX/CPU · RankLLM against any inference endpoint
+- **Observability:** [OpenTelemetry](https://opentelemetry.io/) traces + Prometheus-compatible metrics
+- **Transport:** MCP SSE, MCP Streamable HTTP
+- **Config:** YAML + environment variable overrides
+- **Deploy:** Docker Compose (dev), Helm chart (Kubernetes / OpenShift)
+
+---
 
 ## License
 
-Copyright (c) 2026 BITKAIO LLC. All rights reserved.
+Copyright © 2026 bitkaio LLC.
 
-Licensed under the [GNU Affero General Public License v3.0](LICENSE) with a commercial dual-licensing option. Contact BITKAIO LLC for commercial licensing inquiries.
+Licensed under the [Apache License, Version 2.0](LICENSE). You may use, modify, and redistribute Palena under the terms of that license. For commercial support, custom reranker models, or production SLAs, contact bitkaio LLC.
