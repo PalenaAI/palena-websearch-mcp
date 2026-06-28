@@ -9,6 +9,13 @@ on:
 permissions:
   contents: read
 
+# Serialize releases per tag; never cancel an in-flight release (it pushes
+# images, signs, and attests — a half-cancelled release is worse than a queued
+# one).
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ghcr.io/palenaai/palena-websearch-mcp
@@ -53,9 +60,9 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      packages: write
-      id-token: write
+      contents: read # checkout the repository
+      packages: write # push the image to GHCR
+      id-token: write # keyless cosign signing via GitHub OIDC
     outputs:
       image: ${{ steps.meta.outputs.tags }}
       digest: ${{ steps.build.outputs.digest }}
@@ -131,9 +138,9 @@ jobs:
     needs: build-and-publish
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      packages: write
-      id-token: write
+      contents: read # checkout the repository
+      packages: write # write cosign signatures/attestations alongside the image
+      id-token: write # keyless cosign signing via GitHub OIDC
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2.18.0
@@ -236,9 +243,9 @@ jobs:
     name: SLSA Provenance
     needs: build-and-publish
     permissions:
-      actions: read
-      id-token: write
-      packages: write
+      actions: read # SLSA generator reads workflow run metadata for provenance
+      id-token: write # keyless signing of the provenance attestation via OIDC
+      packages: write # attach the provenance attestation to the image in GHCR
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0
     with:
       image: ghcr.io/palenaai/palena-websearch-mcp
@@ -252,7 +259,7 @@ jobs:
     needs: [build-and-publish, sign-and-attest, provenance]
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write # create the GitHub Release and upload release assets
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2.18.0

@@ -9,17 +9,24 @@ on:
   push:
     branches: [main]
 
-permissions: read-all
+# Minimal workflow default; the analysis job elevates only what Scorecard needs.
+permissions:
+  contents: read
+
+# Only the latest Scorecard run per ref is meaningful.
+concurrency:
+  group: scorecard-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   analysis:
     name: Scorecard analysis
     runs-on: ubuntu-latest
     permissions:
-      security-events: write
-      id-token: write
-      contents: read
-      actions: read
+      security-events: write # upload the Scorecard SARIF to the Security tab
+      id-token: write # publish signed results to the public Scorecard API
+      contents: read # checkout the repository
+      actions: read # read workflow metadata for the Token-Permissions/CI checks
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2.18.0

@@ -11,6 +11,11 @@ on:
 permissions:
   contents: read
 
+# Only the most recent scheduled scan matters; cancel any still-running one.
+concurrency:
+  group: scheduled-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   IMAGE_NAME: ghcr.io/palenaai/palena-websearch-mcp
 
@@ -23,8 +28,8 @@ jobs:
     name: govulncheck (scheduled)
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      issues: write
+      contents: read # checkout the repository
+      issues: write # open/update a tracking issue when new vulnerabilities appear
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2.18.0
@@ -81,10 +86,10 @@ jobs:
     name: Trivy (latest image)
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      security-events: write
-      packages: read
-      issues: write
+      contents: read # checkout the repository
+      security-events: write # upload the scheduled Trivy SARIF to the Security tab
+      packages: read # pull the published image from GHCR to scan it
+      issues: write # open/update a tracking issue when new vulnerabilities appear
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2.18.0

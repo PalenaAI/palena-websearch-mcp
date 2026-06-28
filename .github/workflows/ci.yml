@@ -71,8 +71,8 @@ jobs:
     name: Security Scans (Semgrep + Hadolint)
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      security-events: write
+      contents: read # checkout the repository
+      security-events: write # upload Semgrep/Hadolint SARIF to the Security tab
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2.18.0
@@ -89,7 +89,7 @@ jobs:
         # packaging issues (pkg_resources / setuptools) seen with pip installs.
         run: |
           docker run --rm \
-            -v "${{ github.workspace }}:/src" \
+            -v "${GITHUB_WORKSPACE}:/src" \
             -w /src \
             semgrep/semgrep@sha256:d8159ff400a103b21d231a9646452025769552e631df786f508448d2e4eacf86 \
             semgrep scan \
@@ -145,8 +145,8 @@ jobs:
     name: Workflow Security (zizmor)
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      security-events: write
+      contents: read # checkout the repository
+      security-events: write # upload zizmor SARIF to the Security tab
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2.18.0
@@ -185,8 +185,8 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      pull-requests: write
+      contents: read # checkout the repository
+      pull-requests: write # post the dependency-review summary comment on the PR
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2.18.0
@@ -212,8 +212,8 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      pull-requests: read
+      contents: read # checkout the repository
+      pull-requests: read # read PR commit messages to validate the title/commits
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2.18.0
@@ -314,8 +314,8 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      security-events: write
+      contents: read # checkout the repository
+      security-events: write # upload the Trivy image-scan SARIF to the Security tab
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2.18.0
@@ -371,7 +371,7 @@ jobs:
             --format json \
             --output trivy-report.json \
             --ignore-unfixed \
-            "${IMAGE_NAME}:ci-${{ github.sha }}"
+            "${IMAGE_NAME}:ci-${GITHUB_SHA}"
 
       - name: Trivy scan (SARIF for Security tab)
         run: |
@@ -381,7 +381,7 @@ jobs:
             --format sarif \
             --output trivy.sarif \
             --ignore-unfixed \
-            "${IMAGE_NAME}:ci-${{ github.sha }}"
+            "${IMAGE_NAME}:ci-${GITHUB_SHA}"
 
       - name: Trivy scan (fail build on HIGH/CRITICAL)
         run: |
@@ -389,7 +389,7 @@ jobs:
             --exit-code 1 \
             --severity HIGH,CRITICAL \
             --ignore-unfixed \
-            "${IMAGE_NAME}:ci-${{ github.sha }}"
+            "${IMAGE_NAME}:ci-${GITHUB_SHA}"
 
       - name: Install syft (SBOM)
         env:
@@ -402,7 +402,7 @@ jobs:
 
       - name: Generate CycloneDX SBOM
         run: |
-          syft "${IMAGE_NAME}:ci-${{ github.sha }}" \
+          syft "${IMAGE_NAME}:ci-${GITHUB_SHA}" \
             -o cyclonedx-json=sbom.cdx.json
 
       - name: Upload Trivy SARIF

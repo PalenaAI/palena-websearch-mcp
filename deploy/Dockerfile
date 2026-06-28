@@ -47,8 +47,15 @@ FROM debian:bookworm-slim
 # (debian:bookworm-slim pins a single ca-certificates version per release;
 # pinning inline here would have to be updated every time the base image
 # bumps, which Renovate already handles at the FROM level.)
-# hadolint ignore=DL3008
+#
+# `apt-get upgrade` pulls the latest security-patched versions of base-image
+# packages (openssl, libssl3, libgnutls30, libc6, libcap2, ...) so Trivy does
+# not flag fixed-but-not-yet-rebased CVEs in the published image. DL3005 warns
+# against upgrade for reproducibility, but for a security boundary image we
+# prefer current patches; the build is still pinned to the bookworm release.
+# hadolint ignore=DL3008,DL3005
 RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 10001 palena \

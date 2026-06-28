@@ -1,6 +1,6 @@
 module github.com/bitkaio/palena-websearch-mcp
 
-go 1.26.2
+go 1.26.4
 
 require (
 	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.0
