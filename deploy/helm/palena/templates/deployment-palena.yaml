@@ -1,5 +1,6 @@
 {{/*
-Copyright (c) 2026 BITKAIO LLC. All rights reserved.
+Copyright (c) 2026 bitkaio LLC. All rights reserved.
+Licensed under the Apache License, Version 2.0. See LICENSE for details.
 */}}
 apiVersion: apps/v1
 kind: Deployment
@@ -24,7 +25,7 @@ spec:
     spec:
       containers:
         - name: palena
-          image: "{{ .Values.palena.image.repository }}:{{ .Values.palena.image.tag }}"
+          image: "{{ .Values.palena.image.repository }}:{{ .Values.palena.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.palena.image.pullPolicy }}
           ports:
             - name: http

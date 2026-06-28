@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-06-28
+
+Security and dependency maintenance release. No API or behavior changes.
+
+### Security
+
+- Bumped the Go toolchain to **1.26.4**, picking up standard-library security fixes (CVE-2026-33811/33814/39820/39836/42499/42504 and related).
+- Bumped **`golang.org/x/net` to v0.56.0**, resolving the `x/net/html` advisories flagged by both Trivy and govulncheck (GO-2026-5025/5027/5028/5029/5030; CVE-2026-25680/25681/27136/33814/39821/42502/42506).
+- The runtime container image now applies the latest security updates to base Debian packages during build (openssl, libssl3, libgnutls30, libc6, libcap2), clearing the HIGH/CRITICAL OS-package findings.
+- Hardened the GitHub Actions workflows (zizmor `--pedantic` is now clean): removed template-injection sinks in `run:` blocks, added workflow concurrency limits, documented every elevated permission, and narrowed the Scorecard workflow's top-level permissions.
+
+### Fixed
+
+- **Helm chart:** corrected the Palena image repository to `ghcr.io/palenaai/palena-websearch-mcp` (was a non-existent `ghcr.io/bitkaio/palena`) and made the image tag default to the chart `appVersion` instead of a stale hardcoded `0.1.0`. The flashrank image repository was aligned to the `palenaai` org (note: that image is not yet published by CI).
+- Updated copyright headers on the Helm chart and `deploy/Dockerfile.flashrank` to `bitkaio LLC` + Apache-2.0.
+
 ## [0.9.0] - 2026-04-18
 
 Initial public release of the Palena MCP Server.

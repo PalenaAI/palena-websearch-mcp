@@ -114,7 +114,7 @@ See [Reranking — KServe](reranking.md#kserve--gpu-cross-encoder) for model and
 
 | Key | Default | Purpose |
 |---|---|---|
-| `palena.image.repository` | `ghcr.io/bitkaio/palena` | Container image. |
+| `palena.image.repository` | `ghcr.io/palenaai/palena-websearch-mcp` | Container image. |
 | `palena.image.tag` | Chart version | Pinned tag. |
 | `palena.replicas` | 2 | Horizontal scale. |
 | `palena.resources.requests.cpu` | `200m` | Baseline per pod. |
